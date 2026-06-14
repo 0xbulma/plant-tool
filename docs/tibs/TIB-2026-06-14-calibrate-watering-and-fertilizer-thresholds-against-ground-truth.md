@@ -62,6 +62,8 @@ Hardcoded, in `src/data/plants.ts` + `src/lib/plantRanges.ts`:
 
 - Moisture: `vwc: {min,max}` ideal band + `vwcCritical` (over-watering), with
   winter tightening. Mapped from watering preference + sensitivity rank.
+  `convertSoilMoisture` now also applies a general one-point gain calibration
+  (see Track B).
 - Fertility: `fertilityIndex(raw) = clamp(raw / 1771 × 100, 0, 100)` →
   `FEEDER_INDEX` bands (light/moderate/heavy) on the 0–100 index. The card is
   labelled "indice" `/100`; the raw value is shown alongside for recalibration.
@@ -98,26 +100,28 @@ This is fully compatible with "hardcoded state": it is a fixed code path keyed o
 device capability, not a user calibration step. It is the single change most
 likely to make fertility genuinely correct.
 
-### Track B — Moisture: validate, then bake measured anchors (secondary)
+### Track B — Moisture: general one-point gain calibration (adopted)
 
-The sensor % is already calibrated; the work is to verify *our thresholds* and,
-where measured, replace the mapped band with a measured one — still hardcoded.
+Field observation (2026-06-14) contradicted "the sensor % is already
+calibrated": a saturated magnolia pot (just watered, soil black/wet) read
+**brut 356 → ~18 % VWC**, when the true value is **~55 %** (container capacity).
+The generic node-flower-power conversion under-reads ~3× on real substrate.
 
-Procedure (documented in a new `docs/plant-care/calibration.md`):
+**Adopted (general — not per-pot — and hardcoded):** a single-point GAIN
+calibration in `convertSoilMoisture`. `SOIL_MOISTURE_CAL_RAW = 356` maps to
+`SOIL_MOISTURE_CAL_VWC = 55`, so `gain = 55 / poly(356) ≈ 3.13`, applied to the
+raw polynomial before clamping to [0,60]. One point only (gain through a zero
+origin): it is exact at saturation and fixes the wet end (the
+over-watering-critical end), but distorts the mid/low range until a dry anchor is
+added. The per-plant `vwc`/`vwcCritical` bands are unchanged — they now sit on a
+correctly-scaled axis.
 
-1. **Two-point per substrate.** Water to free drainage, wait ~30 min, read the
-   sensor → that is **container capacity** for this mix; `vwcCritical` is set
-   just below it. Dry to first wilt, read → dry floor. Band sits between.
-2. **Gravimetric cross-check (gold standard).** Weigh the pot saturated-and-
-   drained vs oven/air-dry; compute true VWC from weight at several points and
-   compare to the sensor to confirm the displayed % (and detect the dry
-   over-read). Adjust the band to measured values.
-3. Where a measured container-capacity/wilting pair exists for the app's
-   reference substrate, **update the hardcoded `vwc`/`vwcCritical`** for the
-   affected plants and cite the measurement in the per-plant doc.
+**Refinement (deferred):** capture a "dry" reading (raw at first wilt / air-dry)
+to upgrade to a two-point affine calibration, optionally gravimetrically
+cross-checked, and document the procedure in `docs/plant-care/calibration.md`.
 
 The over-watering invariant (`vwcCritical < 60`, asserted in
-`src/test/plantRanges.test.ts`) must continue to hold after any retune.
+`src/test/plantRanges.test.ts`) still holds on the calibrated scale.
 
 ### Implementation Phases
 
@@ -207,6 +211,18 @@ fallback in `calibration.md`.
 - node-flower-power — <https://github.com/sandeepmistry/node-flower-power>
 - EC pour-through interpretation (NC State) — <https://content.ces.ncsu.edu/the-pour-through-extraction-procedure-a-nutrient-management-tool-for-nursery-crops>
 - EC SME interpretation (UConn / Warncke) — <https://soiltesting.cahnr.uconn.edu/interpretation-of-sme-results-for-greenhouse-media/>
+
+## Addenda
+
+### 2026-06-14 — General one-point soil-moisture gain calibration shipped
+
+**Author:** @0xbulma
+
+A saturated pot reading brut 356 → ~18 % VWC (true ~55 %) confirmed the generic
+node-flower-power conversion under-reads ~3×. Adopted a general (not per-pot)
+one-point gain calibration in `convertSoilMoisture` (Track B):
+`SOIL_MOISTURE_CAL_RAW = 356` → `SOIL_MOISTURE_CAL_VWC = 55`. The two-point
+refinement (dry anchor) remains the deferred follow-up.
 
 <!--
 TIB conventions:

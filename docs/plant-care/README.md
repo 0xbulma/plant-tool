@@ -63,6 +63,13 @@ Two consequences the app relies on:
    wet. So a "too wet" reading is trustworthy; a "too dry" reading is only ever a
    **warning**, never "critical".
 
+> **General one-point calibration.** A real saturated pot read brut 356 → ~18 %
+> (true ~55 %), i.e. the generic formula under-reads ~3×. `convertSoilMoisture`
+> therefore applies a hardcoded, sensor-wide **gain** (`SOIL_MOISTURE_CAL_RAW 356
+> → SOIL_MOISTURE_CAL_VWC 55`) so saturation reads its true VWC. One point only —
+> exact at the wet end, approximate mid/low until a dry anchor is added. See the
+> [calibration TIB](../tibs/TIB-2026-06-14-calibrate-watering-and-fertilizer-thresholds-against-ground-truth.md).
+
 ### 1.2 Why fertility is a *relative* index, not mS/cm
 
 There is **no reliable raw→mS/cm conversion** for the Parrot soil-EC

@@ -40,17 +40,40 @@ export function convertTemperature(raw: number): number {
   return clamp(t, -10, 55);
 }
 
-/** Humidité volumique du sol, en % VWC (valable 0 → 60 %). */
-export function convertSoilMoisture(raw: number): number {
+/**
+ * Humidité du sol BRUTE (formule générique node-flower-power), en % VWC avant
+ * calibration. Peut sortir de [0,60] avant calibrage.
+ */
+function soilMoisturePoly(raw: number): number {
   const s =
     11.4293 +
     (0.0000000010698 * raw ** 4 -
       0.00000152538 * raw ** 3 +
       0.000866976 * raw ** 2 -
       0.169422 * raw);
-  const moisture =
-    100 * (0.0000045 * s ** 3 - 0.00055 * s ** 2 + 0.0292 * s - 0.053);
-  return clamp(moisture, 0, 60);
+  return 100 * (0.0000045 * s ** 3 - 0.00055 * s ** 2 + 0.0292 * s - 0.053);
+}
+
+/**
+ * Calibration GÉNÉRALE à un point de l'humidité du sol.
+ *
+ * La formule générique sous-évalue fortement : un sol saturé (juste arrosé,
+ * « terre noire complètement humide ») a été mesuré à brut 356 → ~18 %, alors
+ * que la réalité est ~55 % VWC (capacité au champ d'un terreau). On applique un
+ * GAIN pour que la saturation lise sa vraie valeur. Modèle à UN SEUL point (gain
+ * d'origine 0), VALABLE POUR TOUT CAPTEUR (pas par pot) : il corrige l'extrémité
+ * humide (le côté critique du sur-arrosage) et est exact à saturation, mais
+ * déforme le milieu/bas de l'échelle tant qu'un point « sec » n'est pas ajouté
+ * (cf. TIB calibration, raffinement à deux points différé).
+ */
+export const SOIL_MOISTURE_CAL_RAW = 356;
+export const SOIL_MOISTURE_CAL_VWC = 55;
+const SOIL_MOISTURE_GAIN =
+  SOIL_MOISTURE_CAL_VWC / soilMoisturePoly(SOIL_MOISTURE_CAL_RAW);
+
+/** Humidité volumique du sol calibrée, en % VWC (bornée 0 → 60 %). */
+export function convertSoilMoisture(raw: number): number {
+  return clamp(soilMoisturePoly(raw) * SOIL_MOISTURE_GAIN, 0, 60);
 }
 
 /**

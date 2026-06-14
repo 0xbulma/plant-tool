@@ -12,6 +12,8 @@ import {
   LIVE_SERVICE,
   readBatteryLevel,
   readSensors,
+  SOIL_MOISTURE_CAL_RAW,
+  SOIL_MOISTURE_CAL_VWC,
   type LiveCharacteristics,
 } from "@/lib/flowerPower";
 
@@ -61,16 +63,22 @@ describe("convertTemperature", () => {
   });
 });
 
-describe("convertSoilMoisture", () => {
-  it("renvoie un pourcentage plausible", () => {
-    const m = convertSoilMoisture(400);
-    expect(m).toBeGreaterThan(20);
-    expect(m).toBeLessThan(25);
+describe("convertSoilMoisture (calibré)", () => {
+  it("ancre le sol saturé observé (brut 356) sur ~55 % VWC", () => {
+    expect(convertSoilMoisture(SOIL_MOISTURE_CAL_RAW)).toBeCloseTo(
+      SOIL_MOISTURE_CAL_VWC,
+      0,
+    );
+  });
+
+  it("croît avec l'humidité dans la plage réaliste", () => {
+    expect(convertSoilMoisture(300)).toBeLessThan(convertSoilMoisture(356));
   });
 
   it("reste bornée entre 0 et 60 %", () => {
     expect(convertSoilMoisture(0)).toBeGreaterThanOrEqual(0);
     expect(convertSoilMoisture(100000)).toBeLessThanOrEqual(60);
+    expect(convertSoilMoisture(356)).toBeLessThanOrEqual(60);
   });
 });
 
@@ -98,7 +106,7 @@ describe("isWebBluetoothAvailable", () => {
 describe("readSensors", () => {
   it("décode les valeurs brutes little-endian et applique les conversions", async () => {
     const chars: LiveCharacteristics = {
-      soilMoisture: u16Char(400),
+      soilMoisture: u16Char(300),
       soilTemperature: u16Char(500),
       airTemperature: u16Char(500),
       sunlight: u16Char(1000),
@@ -106,12 +114,12 @@ describe("readSensors", () => {
     };
     const r = await readSensors(chars);
 
-    expect(r.raw.soilMoisture).toBe(400);
+    expect(r.raw.soilMoisture).toBe(300);
     expect(r.raw.soilEC).toBe(123);
     expect(r.soilEC).toBe(123); // EC passe en brut, sans conversion
     expect(r.soilTemperature).toBeCloseTo(10.71, 1);
-    expect(r.soilMoisture).toBeGreaterThan(20);
-    expect(r.soilMoisture).toBeLessThan(25);
+    expect(r.soilMoisture).toBeGreaterThan(30); // brut 300 calibré ≈ 33 %
+    expect(r.soilMoisture).toBeLessThan(37);
   });
 
   it("décode correctement un uint16 multi-octets (endianness)", async () => {
