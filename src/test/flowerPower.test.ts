@@ -12,6 +12,8 @@ import {
   LIVE_SERVICE,
   readBatteryLevel,
   readSensors,
+  SOIL_MOISTURE_CAL_RAW,
+  SOIL_MOISTURE_CAL_VWC,
   type LiveCharacteristics,
 } from "@/lib/flowerPower";
 
@@ -32,6 +34,17 @@ function u8Char(value: number): BluetoothRemoteGATTCharacteristic {
     readValue: async () => {
       const dv = new DataView(new ArrayBuffer(1));
       dv.setUint8(0, value);
+      return dv;
+    },
+  } as unknown as BluetoothRemoteGATTCharacteristic;
+}
+
+/** Stub characteristic whose readValue() yields a little-endian float32. */
+function f32Char(value: number): BluetoothRemoteGATTCharacteristic {
+  return {
+    readValue: async () => {
+      const dv = new DataView(new ArrayBuffer(4));
+      dv.setFloat32(0, value, true);
       return dv;
     },
   } as unknown as BluetoothRemoteGATTCharacteristic;
@@ -61,16 +74,22 @@ describe("convertTemperature", () => {
   });
 });
 
-describe("convertSoilMoisture", () => {
-  it("renvoie un pourcentage plausible", () => {
-    const m = convertSoilMoisture(400);
-    expect(m).toBeGreaterThan(20);
-    expect(m).toBeLessThan(25);
+describe("convertSoilMoisture (calibré)", () => {
+  it("ancre le sol saturé observé (brut 356) sur ~55 % VWC", () => {
+    expect(convertSoilMoisture(SOIL_MOISTURE_CAL_RAW)).toBeCloseTo(
+      SOIL_MOISTURE_CAL_VWC,
+      0,
+    );
+  });
+
+  it("croît avec l'humidité dans la plage réaliste", () => {
+    expect(convertSoilMoisture(300)).toBeLessThan(convertSoilMoisture(356));
   });
 
   it("reste bornée entre 0 et 60 %", () => {
     expect(convertSoilMoisture(0)).toBeGreaterThanOrEqual(0);
     expect(convertSoilMoisture(100000)).toBeLessThanOrEqual(60);
+    expect(convertSoilMoisture(356)).toBeLessThanOrEqual(60);
   });
 });
 
@@ -98,7 +117,7 @@ describe("isWebBluetoothAvailable", () => {
 describe("readSensors", () => {
   it("décode les valeurs brutes little-endian et applique les conversions", async () => {
     const chars: LiveCharacteristics = {
-      soilMoisture: u16Char(400),
+      soilMoisture: u16Char(300),
       soilTemperature: u16Char(500),
       airTemperature: u16Char(500),
       sunlight: u16Char(1000),
@@ -106,12 +125,46 @@ describe("readSensors", () => {
     };
     const r = await readSensors(chars);
 
-    expect(r.raw.soilMoisture).toBe(400);
+    expect(r.raw.soilMoisture).toBe(300);
     expect(r.raw.soilEC).toBe(123);
     expect(r.soilEC).toBe(123); // EC passe en brut, sans conversion
     expect(r.soilTemperature).toBeCloseTo(10.71, 1);
-    expect(r.soilMoisture).toBeGreaterThan(20);
-    expect(r.soilMoisture).toBeLessThan(25);
+    expect(r.soilMoisture).toBeGreaterThan(30); // brut 300 calibré ≈ 33 %
+    expect(r.soilMoisture).toBeLessThan(37);
+  });
+
+  it("préfère les valeurs calibrées du capteur quand elles existent", async () => {
+    const r = await readSensors({
+      soilMoisture: u16Char(300), // brut → repli formule donnerait ~33 %
+      calibratedSoilMoisture: f32Char(54.5),
+      airTemperature: u16Char(727),
+      calibratedAirTemperature: f32Char(23.2),
+      sunlight: u16Char(23902),
+      calibratedSunlight: f32Char(0.42),
+    });
+    expect(r.raw.soilMoisture).toBe(300); // brut conservé pour l'affichage
+    expect(r.soilMoisture).toBeCloseTo(54.5, 1); // valeur calibrée prioritaire
+    expect(r.airTemperature).toBeCloseTo(23.2, 1);
+    expect(r.sunlight).toBeCloseTo(0.42, 2);
+  });
+
+  it("ignore une valeur calibrée non finie (NaN) et retombe sur le brut", async () => {
+    const r = await readSensors({
+      soilMoisture: u16Char(300),
+      calibratedSoilMoisture: f32Char(NaN),
+    });
+    expect(r.soilMoisture).toBe(convertSoilMoisture(300)); // repli sur la formule
+  });
+
+  it("borne les valeurs calibrées hors plage", async () => {
+    const r = await readSensors({
+      calibratedSoilMoisture: f32Char(70), // > 60 → borné
+      calibratedAirTemperature: f32Char(-20), // < -10 → borné
+      calibratedSunlight: f32Char(-1), // < 0 → borné
+    });
+    expect(r.soilMoisture).toBe(60);
+    expect(r.airTemperature).toBe(-10);
+    expect(r.sunlight).toBe(0);
   });
 
   it("décode correctement un uint16 multi-octets (endianness)", async () => {

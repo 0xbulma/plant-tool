@@ -63,6 +63,16 @@ Two consequences the app relies on:
    wet. So a "too wet" reading is trustworthy; a "too dry" reading is only ever a
    **warning**, never "critical".
 
+> **Calibrated channels (primary) + gain fallback.** A GATT probe of a real
+> Hawaii (fw 2.0.3) found the sensor exposes its **own calibrated** soil moisture
+> (`fa09`), air temperature (`fa0a`) and light/DLI (`fa0b`) as float32. `readSensors`
+> **prefers those** when present (Parrot's own calibration). When they're absent,
+> it falls back to the raw formulas — and for soil moisture, to a hardcoded
+> sensor-wide **gain** (`SOIL_MOISTURE_CAL_RAW 356 → SOIL_MOISTURE_CAL_VWC 55`,
+> from a saturated pot that read brut 356 ≈ 18 % when truly ~55 %). The EC channel
+> has **no** calibrated equivalent, so fertility stays raw/relative. See the
+> [calibration TIB](../tibs/TIB-2026-06-14-calibrate-watering-and-fertilizer-thresholds-against-ground-truth.md).
+
 ### 1.2 Why fertility is a *relative* index, not mS/cm
 
 There is **no reliable raw→mS/cm conversion** for the Parrot soil-EC

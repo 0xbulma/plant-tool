@@ -62,6 +62,8 @@ Hardcoded, in `src/data/plants.ts` + `src/lib/plantRanges.ts`:
 
 - Moisture: `vwc: {min,max}` ideal band + `vwcCritical` (over-watering), with
   winter tightening. Mapped from watering preference + sensitivity rank.
+  `convertSoilMoisture` now also applies a general one-point gain calibration
+  (see Track B).
 - Fertility: `fertilityIndex(raw) = clamp(raw / 1771 × 100, 0, 100)` →
   `FEEDER_INDEX` bands (light/moderate/heavy) on the 0–100 index. The card is
   labelled "indice" `/100`; the raw value is shown alongside for recalibration.
@@ -98,26 +100,28 @@ This is fully compatible with "hardcoded state": it is a fixed code path keyed o
 device capability, not a user calibration step. It is the single change most
 likely to make fertility genuinely correct.
 
-### Track B — Moisture: validate, then bake measured anchors (secondary)
+### Track B — Moisture: general one-point gain calibration (adopted)
 
-The sensor % is already calibrated; the work is to verify *our thresholds* and,
-where measured, replace the mapped band with a measured one — still hardcoded.
+Field observation (2026-06-14) contradicted "the sensor % is already
+calibrated": a saturated magnolia pot (just watered, soil black/wet) read
+**brut 356 → ~18 % VWC**, when the true value is **~55 %** (container capacity).
+The generic node-flower-power conversion under-reads ~3× on real substrate.
 
-Procedure (documented in a new `docs/plant-care/calibration.md`):
+**Adopted (general — not per-pot — and hardcoded):** a single-point GAIN
+calibration in `convertSoilMoisture`. `SOIL_MOISTURE_CAL_RAW = 356` maps to
+`SOIL_MOISTURE_CAL_VWC = 55`, so `gain = 55 / poly(356) ≈ 3.13`, applied to the
+raw polynomial before clamping to [0,60]. One point only (gain through a zero
+origin): it is exact at saturation and fixes the wet end (the
+over-watering-critical end), but distorts the mid/low range until a dry anchor is
+added. The per-plant `vwc`/`vwcCritical` bands are unchanged — they now sit on a
+correctly-scaled axis.
 
-1. **Two-point per substrate.** Water to free drainage, wait ~30 min, read the
-   sensor → that is **container capacity** for this mix; `vwcCritical` is set
-   just below it. Dry to first wilt, read → dry floor. Band sits between.
-2. **Gravimetric cross-check (gold standard).** Weigh the pot saturated-and-
-   drained vs oven/air-dry; compute true VWC from weight at several points and
-   compare to the sensor to confirm the displayed % (and detect the dry
-   over-read). Adjust the band to measured values.
-3. Where a measured container-capacity/wilting pair exists for the app's
-   reference substrate, **update the hardcoded `vwc`/`vwcCritical`** for the
-   affected plants and cite the measurement in the per-plant doc.
+**Refinement (deferred):** capture a "dry" reading (raw at first wilt / air-dry)
+to upgrade to a two-point affine calibration, optionally gravimetrically
+cross-checked, and document the procedure in `docs/plant-care/calibration.md`.
 
 The over-watering invariant (`vwcCritical < 60`, asserted in
-`src/test/plantRanges.test.ts`) must continue to hold after any retune.
+`src/test/plantRanges.test.ts`) still holds on the calibrated scale.
 
 ### Implementation Phases
 
@@ -194,11 +198,22 @@ fallback in `calibration.md`.
 
 ## Open Questions
 
-- Does the target device's firmware actually expose `39e1fa0e`/`39e1fa0d`?
-  (Needs a one-off read of the firmware revision + a characteristic probe on real
-  hardware before committing Phase 1.)
-- Which calibrated characteristic better matches the published interpretation
-  bands — *Ec porous* (soil solution) or *Ecb* (bulk)? Default to *Ec porous*.
+- ~~Does the target device expose `39e1fa0e`/`39e1fa0d`?~~ **Answered (2026-06-14):
+  NO.** A GATT probe of the test device (Flower Power "Hawaii", firmware
+  `2016-09-14_hawaii-2.0.3`) shows the live service exposes `fa01–fa07`, `fa09`,
+  `fa0a`, `fa0b` — **no `fa0c`/`fa0d`/`fa0e`**. Calibrated EC is unavailable on
+  this hardware ⇒ **Phase 1 (Track A primary) is not viable here**; fertility
+  stays the relative index, and real mS/cm would require an EC pen (Track A
+  fallback). The `firmware ≥ 1.1.0 ⇒ calibrated EC` assumption does not hold for
+  Hawaii.
+- ~~The extra live characteristics `fa09`/`fa0a`/`fa0b` — what are they?~~
+  **Answered (2026-06-14):** read as float32 they are the sensor's **own
+  calibrated** measurements — `fa09` = soil moisture (% VWC), `fa0a` = air
+  temperature (°C), `fa0b` = light/DLI (mol/m²/j). Confirmed by matching `fa0a`
+  ≈ 23.2 °C and `fa0b` ≈ 0.42 to the raw-formula values; `fa09` by elimination
+  (Parrot calibrates moisture/temp/light, not EC). **`readSensors` now prefers
+  these** (with raw-formula + gain fallback). This supersedes the Track B gain as
+  the primary moisture source on devices that expose `fa09`.
 
 ## References
 
@@ -207,6 +222,30 @@ fallback in `calibration.md`.
 - node-flower-power — <https://github.com/sandeepmistry/node-flower-power>
 - EC pour-through interpretation (NC State) — <https://content.ces.ncsu.edu/the-pour-through-extraction-procedure-a-nutrient-management-tool-for-nursery-crops>
 - EC SME interpretation (UConn / Warncke) — <https://soiltesting.cahnr.uconn.edu/interpretation-of-sme-results-for-greenhouse-media/>
+
+## Addenda
+
+### 2026-06-14 — General one-point soil-moisture gain calibration shipped
+
+**Author:** @0xbulma
+
+A saturated pot reading brut 356 → ~18 % VWC (true ~55 %) confirmed the generic
+node-flower-power conversion under-reads ~3×. Adopted a general (not per-pot)
+one-point gain calibration in `convertSoilMoisture` (Track B):
+`SOIL_MOISTURE_CAL_RAW = 356` → `SOIL_MOISTURE_CAL_VWC = 55`. The two-point
+refinement (dry anchor) remains the deferred follow-up.
+
+### 2026-06-14 — Sensor's own calibrated channels wired as primary
+
+**Author:** @0xbulma
+
+A GATT probe of the Hawaii (fw 2.0.3) found **no** calibrated EC (`fa0d`/`fa0e`
+absent) — fertility stays the relative index — but the live service exposes the
+sensor's own calibrated **soil moisture (`fa09`)**, **air temperature (`fa0a`)**
+and **light/DLI (`fa0b`)** as float32. `readSensors` now **prefers these** when
+present, falling back to the raw formulas (and the one-point gain for moisture)
+otherwise. The gain calibration above is now the *fallback*, not the primary
+moisture source.
 
 <!--
 TIB conventions:

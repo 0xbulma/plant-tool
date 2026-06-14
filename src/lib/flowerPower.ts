@@ -15,6 +15,12 @@ export const CHARACTERISTIC = {
   airTemperature: "39e1fa04-84a8-11e2-afba-0002a5d5c51b",
   soilMoisture: "39e1fa05-84a8-11e2-afba-0002a5d5c51b",
   livePeriod: "39e1fa06-84a8-11e2-afba-0002a5d5c51b",
+  // Valeurs CALIBRÉES par le capteur (float32 little-endian), identifiées par
+  // sonde GATT sur un Flower Power « Hawaii » firmware 2.0.3 (cf. TIB calibration).
+  // L'EC (fa02) n'a PAS d'équivalent calibré → la fertilité reste brute/relative.
+  calibratedSoilMoisture: "39e1fa09-84a8-11e2-afba-0002a5d5c51b", // % VWC
+  calibratedAirTemperature: "39e1fa0a-84a8-11e2-afba-0002a5d5c51b", // °C
+  calibratedSunlight: "39e1fa0b-84a8-11e2-afba-0002a5d5c51b", // mol/m²/j (DLI)
 } as const;
 
 // UUID Bluetooth standard, écrits en 128 bits complets (forme canonique de
@@ -40,17 +46,40 @@ export function convertTemperature(raw: number): number {
   return clamp(t, -10, 55);
 }
 
-/** Humidité volumique du sol, en % VWC (valable 0 → 60 %). */
-export function convertSoilMoisture(raw: number): number {
+/**
+ * Humidité du sol BRUTE (formule générique node-flower-power), en % VWC avant
+ * calibration. Peut sortir de [0,60] avant calibrage.
+ */
+function soilMoisturePoly(raw: number): number {
   const s =
     11.4293 +
     (0.0000000010698 * raw ** 4 -
       0.00000152538 * raw ** 3 +
       0.000866976 * raw ** 2 -
       0.169422 * raw);
-  const moisture =
-    100 * (0.0000045 * s ** 3 - 0.00055 * s ** 2 + 0.0292 * s - 0.053);
-  return clamp(moisture, 0, 60);
+  return 100 * (0.0000045 * s ** 3 - 0.00055 * s ** 2 + 0.0292 * s - 0.053);
+}
+
+/**
+ * Calibration GÉNÉRALE à un point de l'humidité du sol.
+ *
+ * La formule générique sous-évalue fortement : un sol saturé (juste arrosé,
+ * « terre noire complètement humide ») a été mesuré à brut 356 → ~18 %, alors
+ * que la réalité est ~55 % VWC (capacité au champ d'un terreau). On applique un
+ * GAIN pour que la saturation lise sa vraie valeur. Modèle à UN SEUL point (gain
+ * d'origine 0), VALABLE POUR TOUT CAPTEUR (pas par pot) : il corrige l'extrémité
+ * humide (le côté critique du sur-arrosage) et est exact à saturation, mais
+ * déforme le milieu/bas de l'échelle tant qu'un point « sec » n'est pas ajouté
+ * (cf. TIB calibration, raffinement à deux points différé).
+ */
+export const SOIL_MOISTURE_CAL_RAW = 356;
+export const SOIL_MOISTURE_CAL_VWC = 55;
+const SOIL_MOISTURE_GAIN =
+  SOIL_MOISTURE_CAL_VWC / soilMoisturePoly(SOIL_MOISTURE_CAL_RAW);
+
+/** Humidité volumique du sol calibrée, en % VWC (bornée 0 → 60 %). */
+export function convertSoilMoisture(raw: number): number {
+  return clamp(soilMoisturePoly(raw) * SOIL_MOISTURE_GAIN, 0, 60);
 }
 
 /**
@@ -131,6 +160,10 @@ export type LiveCharacteristics = {
   sunlight?: BluetoothRemoteGATTCharacteristic;
   soilEC?: BluetoothRemoteGATTCharacteristic;
   battery?: BluetoothRemoteGATTCharacteristic;
+  // Canaux calibrés par le capteur (float32) — absents sur certains firmwares.
+  calibratedSoilMoisture?: BluetoothRemoteGATTCharacteristic;
+  calibratedAirTemperature?: BluetoothRemoteGATTCharacteristic;
+  calibratedSunlight?: BluetoothRemoteGATTCharacteristic;
 };
 
 /** Connecte le GATT, active le mode "live" et résout les caractéristiques. */
@@ -161,6 +194,15 @@ export async function connectFlowerPower(
       .catch(() => undefined),
     soilEC: await live
       .getCharacteristic(CHARACTERISTIC.soilEC)
+      .catch(() => undefined),
+    calibratedSoilMoisture: await live
+      .getCharacteristic(CHARACTERISTIC.calibratedSoilMoisture)
+      .catch(() => undefined),
+    calibratedAirTemperature: await live
+      .getCharacteristic(CHARACTERISTIC.calibratedAirTemperature)
+      .catch(() => undefined),
+    calibratedSunlight: await live
+      .getCharacteristic(CHARACTERISTIC.calibratedSunlight)
       .catch(() => undefined),
   };
 
@@ -194,6 +236,20 @@ export async function connectFlowerPower(
   return chars;
 }
 
+/**
+ * Valeur calibrée du capteur si présente (post-traitée, ex. bornage), sinon la
+ * conversion de la valeur brute, sinon null.
+ */
+function preferCalibrated(
+  calibrated: number | null,
+  raw: number | null,
+  convert: (raw: number) => number,
+  post: (value: number) => number,
+): number | null {
+  if (calibrated !== null) return post(calibrated);
+  return raw === null ? null : convert(raw);
+}
+
 /** Lit toutes les caractéristiques disponibles et applique les conversions. */
 export async function readSensors(
   chars: LiveCharacteristics,
@@ -201,6 +257,15 @@ export async function readSensors(
   const readRaw = async (
     c: BluetoothRemoteGATTCharacteristic | undefined,
   ): Promise<number | null> => (c ? u16(await c.readValue()) : null);
+
+  // Lit un canal CALIBRÉ (float32 little-endian) ; null si absent ou non fini.
+  const readFloat = async (
+    c: BluetoothRemoteGATTCharacteristic | undefined,
+  ): Promise<number | null> => {
+    if (!c) return null;
+    const v = (await c.readValue()).getFloat32(0, true);
+    return Number.isFinite(v) ? v : null;
+  };
 
   const raw = {
     soilMoisture: await readRaw(chars.soilMoisture),
@@ -210,13 +275,34 @@ export async function readSensors(
     soilEC: await readRaw(chars.soilEC),
   };
 
+  // Valeurs calibrées par le capteur (prioritaires) ; sinon repli sur nos
+  // conversions à partir du brut. Le capteur Hawaii calibre humidité, température
+  // de l'air et lumière — mais PAS l'EC ni la température du sol.
+  const calSoilMoisture = await readFloat(chars.calibratedSoilMoisture);
+  const calAirTemperature = await readFloat(chars.calibratedAirTemperature);
+  const calSunlight = await readFloat(chars.calibratedSunlight);
+
   return {
-    soilMoisture: raw.soilMoisture === null ? null : convertSoilMoisture(raw.soilMoisture),
+    soilMoisture: preferCalibrated(
+      calSoilMoisture,
+      raw.soilMoisture,
+      convertSoilMoisture,
+      (v) => clamp(v, 0, 60),
+    ),
     soilTemperature:
       raw.soilTemperature === null ? null : convertTemperature(raw.soilTemperature),
-    airTemperature:
-      raw.airTemperature === null ? null : convertTemperature(raw.airTemperature),
-    sunlight: raw.sunlight === null ? null : convertSunlight(raw.sunlight),
+    airTemperature: preferCalibrated(
+      calAirTemperature,
+      raw.airTemperature,
+      convertTemperature,
+      (v) => clamp(v, -10, 55),
+    ),
+    sunlight: preferCalibrated(
+      calSunlight,
+      raw.sunlight,
+      convertSunlight,
+      (v) => Math.max(0, v),
+    ),
     soilEC: raw.soilEC,
     raw,
   };
