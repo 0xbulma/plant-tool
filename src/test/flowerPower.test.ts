@@ -1,10 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  CHARACTERISTIC,
   clamp,
+  connectFlowerPower,
   convertSoilMoisture,
   convertSunlight,
   convertTemperature,
   isWebBluetoothAvailable,
+  LIVE_SERVICE,
   readBatteryLevel,
   readSensors,
   type LiveCharacteristics,
@@ -131,5 +134,68 @@ describe("readBatteryLevel", () => {
 
   it("renvoie l'octet de niveau de batterie", async () => {
     expect(await readBatteryLevel({ battery: u8Char(88) })).toBe(88);
+  });
+});
+
+/** Fabrique un faux BluetoothDevice pour piloter connectFlowerPower. */
+function fakeDevice(opts: {
+  noGatt?: boolean;
+  liveChars?: string[]; // UUID des caractéristiques live qui résolvent
+  livePeriodFails?: boolean;
+}): BluetoothDevice {
+  const present = new Set(opts.liveChars ?? []);
+  const liveService = {
+    getCharacteristic: async (uuid: string) => {
+      if (uuid === CHARACTERISTIC.livePeriod) {
+        if (opts.livePeriodFails) throw new Error("pas de livePeriod");
+        return { writeValue: async () => undefined };
+      }
+      if (present.has(uuid)) return u16Char(0);
+      throw new Error("caractéristique absente");
+    },
+  };
+  const server = {
+    getPrimaryService: async (svc: unknown) => {
+      if (svc === LIVE_SERVICE) return liveService;
+      throw new Error("service absent"); // batterie -> chars.battery undefined
+    },
+  };
+  const gatt = opts.noGatt ? undefined : { connect: async () => server };
+  return { gatt } as unknown as BluetoothDevice;
+}
+
+describe("connectFlowerPower", () => {
+  it("rejette si l'appareil n'a pas de serveur GATT", async () => {
+    await expect(connectFlowerPower(fakeDevice({ noGatt: true }))).rejects.toThrow(
+      /GATT/,
+    );
+  });
+
+  it("rejette si aucune caractéristique de mesure ne résout", async () => {
+    await expect(
+      connectFlowerPower(fakeDevice({ liveChars: [] })),
+    ).rejects.toThrow(/incompatible/);
+  });
+
+  it("résout les caractéristiques présentes", async () => {
+    const chars = await connectFlowerPower(
+      fakeDevice({ liveChars: [CHARACTERISTIC.soilMoisture] }),
+    );
+    expect(chars.soilMoisture).toBeDefined();
+    expect(chars.sunlight).toBeUndefined();
+    expect(chars.battery).toBeUndefined();
+  });
+
+  it("n'échoue pas si l'écriture du live mode échoue", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const chars = await connectFlowerPower(
+      fakeDevice({
+        liveChars: [CHARACTERISTIC.soilMoisture],
+        livePeriodFails: true,
+      }),
+    );
+    expect(chars.soilMoisture).toBeDefined();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

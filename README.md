@@ -6,10 +6,10 @@ cloud Parrot (l'app officielle ayant disparu).
 
 ## Stack
 
-- **React 19** + **Vite 6** (TypeScript)
+- **React 19** + **Vite 8** (TypeScript)
 - **Tailwind CSS v4** (plugin `@tailwindcss/vite`)
 - **shadcn/ui** (Button, Card, Badge) + **lucide-react**
-- **Vitest** + Testing Library (jsdom)
+- **Vitest 4** + Testing Library (jsdom)
 
 ## Mesures affichées
 

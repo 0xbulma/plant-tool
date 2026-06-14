@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/flowerPower", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/flowerPower")>();
@@ -101,5 +101,71 @@ describe("useFlowerPower", () => {
     });
     await waitFor(() => expect(result.current.status).toBe("error"));
     expect(result.current.error).toBe("boom");
+  });
+
+  it("revient à idle si l'utilisateur annule le sélecteur", async () => {
+    mocked.requestFlowerPower.mockRejectedValueOnce(
+      new DOMException("cancelled", "NotFoundError"),
+    );
+    const { result } = renderHook(() => useFlowerPower());
+    await act(async () => {
+      await result.current.connect();
+    });
+    await waitFor(() => expect(result.current.status).toBe("idle"));
+    expect(result.current.error).toBeNull();
+  });
+});
+
+describe("useFlowerPower — polling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    mocked.requestFlowerPower.mockResolvedValue(fakeDevice());
+    mocked.connectFlowerPower.mockResolvedValue({});
+    mocked.readSensors.mockResolvedValue(reading);
+    mocked.readBatteryLevel.mockResolvedValue(90);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("relit à chaque intervalle puis s'arrête après disconnect", async () => {
+    const { result } = renderHook(() => useFlowerPower());
+    await act(async () => {
+      await result.current.connect();
+    });
+    expect(result.current.status).toBe("connected");
+    expect(mocked.readSensors).toHaveBeenCalledTimes(1); // lecture immédiate
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(mocked.readSensors).toHaveBeenCalledTimes(2); // tick suivant
+
+    act(() => result.current.disconnect());
+    mocked.readSensors.mockClear();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000);
+    });
+    expect(mocked.readSensors).not.toHaveBeenCalled(); // polling stoppé
+  });
+
+  it("passe en erreur et stoppe le polling si une lecture échoue", async () => {
+    const { result } = renderHook(() => useFlowerPower());
+    await act(async () => {
+      await result.current.connect();
+    });
+    expect(result.current.status).toBe("connected");
+
+    mocked.readSensors.mockRejectedValueOnce(new Error("read fail"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(result.current.status).toBe("error");
+    expect(result.current.error).toBe("read fail");
+
+    mocked.readSensors.mockClear();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000);
+    });
+    expect(mocked.readSensors).not.toHaveBeenCalled();
   });
 });

@@ -58,8 +58,7 @@ function App() {
 
       <div
         className="mb-6 flex justify-center"
-        role="status"
-        aria-live={status === "error" ? "assertive" : "polite"}
+        role={status === "error" ? "alert" : "status"}
       >
         {connected ? (
           <Badge>

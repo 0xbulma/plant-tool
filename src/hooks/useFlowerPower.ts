@@ -127,6 +127,15 @@ export function useFlowerPower() {
       setStatus("connected");
       startPolling();
     } catch (e) {
+      // L'utilisateur a fermé le sélecteur d'appareils : ce n'est pas une
+      // erreur, on revient simplement à l'état initial.
+      if (
+        e instanceof DOMException &&
+        (e.name === "NotFoundError" || e.name === "AbortError")
+      ) {
+        setStatus("idle");
+        return;
+      }
       setError(toMessage(e));
       setStatus("error");
     }

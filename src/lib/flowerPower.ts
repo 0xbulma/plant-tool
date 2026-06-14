@@ -2,7 +2,7 @@
  * Protocole BLE du capteur Parrot Flower Power.
  *
  * UUID GATT et formules de conversion repris de la librairie de référence
- * `node-flower-power` (Parrot-Developers) et de la spec BLE officielle Parrot.
+ * `node-flower-power` (sandeepmistry) et de la spec BLE officielle Parrot.
  * Les valeurs lues sont des entiers 16 bits non signés little-endian.
  */
 
