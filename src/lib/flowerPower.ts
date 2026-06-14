@@ -236,6 +236,20 @@ export async function connectFlowerPower(
   return chars;
 }
 
+/**
+ * Valeur calibrée du capteur si présente (post-traitée, ex. bornage), sinon la
+ * conversion de la valeur brute, sinon null.
+ */
+function preferCalibrated(
+  calibrated: number | null,
+  raw: number | null,
+  convert: (raw: number) => number,
+  post: (value: number) => number,
+): number | null {
+  if (calibrated !== null) return post(calibrated);
+  return raw === null ? null : convert(raw);
+}
+
 /** Lit toutes les caractéristiques disponibles et applique les conversions. */
 export async function readSensors(
   chars: LiveCharacteristics,
@@ -269,26 +283,26 @@ export async function readSensors(
   const calSunlight = await readFloat(chars.calibratedSunlight);
 
   return {
-    soilMoisture:
-      calSoilMoisture !== null
-        ? clamp(calSoilMoisture, 0, 60)
-        : raw.soilMoisture === null
-          ? null
-          : convertSoilMoisture(raw.soilMoisture),
+    soilMoisture: preferCalibrated(
+      calSoilMoisture,
+      raw.soilMoisture,
+      convertSoilMoisture,
+      (v) => clamp(v, 0, 60),
+    ),
     soilTemperature:
       raw.soilTemperature === null ? null : convertTemperature(raw.soilTemperature),
-    airTemperature:
-      calAirTemperature !== null
-        ? clamp(calAirTemperature, -10, 55)
-        : raw.airTemperature === null
-          ? null
-          : convertTemperature(raw.airTemperature),
-    sunlight:
-      calSunlight !== null
-        ? Math.max(0, calSunlight)
-        : raw.sunlight === null
-          ? null
-          : convertSunlight(raw.sunlight),
+    airTemperature: preferCalibrated(
+      calAirTemperature,
+      raw.airTemperature,
+      convertTemperature,
+      (v) => clamp(v, -10, 55),
+    ),
+    sunlight: preferCalibrated(
+      calSunlight,
+      raw.sunlight,
+      convertSunlight,
+      (v) => Math.max(0, v),
+    ),
     soilEC: raw.soilEC,
     raw,
   };

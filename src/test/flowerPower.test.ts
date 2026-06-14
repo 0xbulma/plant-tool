@@ -148,6 +148,25 @@ describe("readSensors", () => {
     expect(r.sunlight).toBeCloseTo(0.42, 2);
   });
 
+  it("ignore une valeur calibrée non finie (NaN) et retombe sur le brut", async () => {
+    const r = await readSensors({
+      soilMoisture: u16Char(300),
+      calibratedSoilMoisture: f32Char(NaN),
+    });
+    expect(r.soilMoisture).toBe(convertSoilMoisture(300)); // repli sur la formule
+  });
+
+  it("borne les valeurs calibrées hors plage", async () => {
+    const r = await readSensors({
+      calibratedSoilMoisture: f32Char(70), // > 60 → borné
+      calibratedAirTemperature: f32Char(-20), // < -10 → borné
+      calibratedSunlight: f32Char(-1), // < 0 → borné
+    });
+    expect(r.soilMoisture).toBe(60);
+    expect(r.airTemperature).toBe(-10);
+    expect(r.sunlight).toBe(0);
+  });
+
   it("décode correctement un uint16 multi-octets (endianness)", async () => {
     // 0x0102 = 258 ; vérifie que l'octet de poids faible est lu en premier.
     const r = await readSensors({ soilEC: u16Char(258) });
