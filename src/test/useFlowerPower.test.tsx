@@ -55,6 +55,12 @@ const reading: SensorReading = {
   },
 };
 
+// Les chemins d'erreur tracent désormais l'objet via console.error : on le
+// neutralise pour garder une sortie de test propre (tous les blocs en dépendent).
+beforeEach(() => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
 describe("useFlowerPower", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -101,6 +107,18 @@ describe("useFlowerPower", () => {
     });
     await waitFor(() => expect(result.current.status).toBe("error"));
     expect(result.current.error).toBe("boom");
+  });
+
+  it("rend lisible un code d'erreur brut (cas Bluefy/iOS)", async () => {
+    // Bluefy rejette avec un code CoreBluetooth brut (un nombre), pas une Error :
+    // l'UI doit afficher un message lisible et non « 2 ».
+    mocked.connectFlowerPower.mockRejectedValueOnce(2);
+    const { result } = renderHook(() => useFlowerPower());
+    await act(async () => {
+      await result.current.connect();
+    });
+    await waitFor(() => expect(result.current.status).toBe("error"));
+    expect(result.current.error).toBe("Erreur Bluetooth (code 2)");
   });
 
   it("revient à idle si l'utilisateur annule le sélecteur", async () => {

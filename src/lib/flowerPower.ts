@@ -17,10 +17,14 @@ export const CHARACTERISTIC = {
   livePeriod: "39e1fa06-84a8-11e2-afba-0002a5d5c51b",
 } as const;
 
-export const BATTERY_SERVICE = 0x180f;
-export const BATTERY_LEVEL = 0x2a19;
-export const DEVICE_INFORMATION_SERVICE = 0x180a;
-export const FIRMWARE_REVISION = 0x2a26;
+// UUID Bluetooth standard, écrits en 128 bits complets (forme canonique de
+// l'alias 16 bits, base "-0000-1000-8000-00805f9b34fb"). Chrome accepte aussi
+// la forme numérique (0x180f), mais le pont CoreBluetooth de Bluefy sur iOS la
+// rejette parfois dès `requestDevice` — d'où la chaîne complète ici.
+export const BATTERY_SERVICE = "0000180f-0000-1000-8000-00805f9b34fb";
+export const BATTERY_LEVEL = "00002a19-0000-1000-8000-00805f9b34fb";
+export const DEVICE_INFORMATION_SERVICE = "0000180a-0000-1000-8000-00805f9b34fb";
+export const FIRMWARE_REVISION = "00002a26-0000-1000-8000-00805f9b34fb";
 
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
