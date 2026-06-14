@@ -1,5 +1,13 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type MockInstance,
+  vi,
+} from "vitest";
 
 vi.mock("@/lib/flowerPower", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/flowerPower")>();
@@ -56,9 +64,11 @@ const reading: SensorReading = {
 };
 
 // Les chemins d'erreur tracent désormais l'objet via console.error : on le
-// neutralise pour garder une sortie de test propre (tous les blocs en dépendent).
+// neutralise pour garder une sortie de test propre, tout en gardant une
+// référence pour vérifier qu'il est bien appelé (tous les blocs en dépendent).
+let consoleErrorSpy: MockInstance;
 beforeEach(() => {
-  vi.spyOn(console, "error").mockImplementation(() => {});
+  consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
 describe("useFlowerPower", () => {
@@ -107,18 +117,31 @@ describe("useFlowerPower", () => {
     });
     await waitFor(() => expect(result.current.status).toBe("error"));
     expect(result.current.error).toBe("boom");
+    // L'objet d'erreur complet doit être tracé pour Safari Web Inspector.
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[FlowerPower]"),
+      expect.any(Error),
+    );
   });
 
-  it("rend lisible un code d'erreur brut (cas Bluefy/iOS)", async () => {
-    // Bluefy rejette avec un code CoreBluetooth brut (un nombre), pas une Error :
-    // l'UI doit afficher un message lisible et non « 2 ».
-    mocked.connectFlowerPower.mockRejectedValueOnce(2);
+  // Bluefy (iOS) rejette avec une valeur non-Error (nombre/objet/chaîne) plutôt
+  // qu'une Error : toMessage doit toujours produire un message lisible — jamais
+  // un « 2 » nu ni une chaîne vide.
+  it.each<[string, unknown, string]>([
+    ["un nombre brut (cas Bluefy/iOS)", 2, "Erreur Bluetooth (code 2)"],
+    ["un objet { code }", { code: 2 }, "Erreur Bluetooth (code 2)"],
+    ["un objet { message }", { message: "GATT indisponible" }, "GATT indisponible"],
+    ["un objet { name } seul", { name: "NetworkError" }, "NetworkError"],
+    ["une valeur indéfinie", undefined, "Erreur Bluetooth inconnue."],
+    ["une chaîne vide", "", "Erreur Bluetooth inconnue."],
+  ])("rend lisible une erreur non-Error (%s)", async (_label, thrown, expected) => {
+    mocked.connectFlowerPower.mockRejectedValueOnce(thrown);
     const { result } = renderHook(() => useFlowerPower());
     await act(async () => {
       await result.current.connect();
     });
     await waitFor(() => expect(result.current.status).toBe("error"));
-    expect(result.current.error).toBe("Erreur Bluetooth (code 2)");
+    expect(result.current.error).toBe(expected);
   });
 
   it("revient à idle si l'utilisateur annule le sélecteur", async () => {

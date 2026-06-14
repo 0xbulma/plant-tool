@@ -17,7 +17,7 @@ const POLL_INTERVAL_MS = 3000;
 // Error, et certaines implémentations lèvent un objet : on évite ainsi qu'un
 // simple « 2 » illisible n'atteigne l'UI.
 const toMessage = (e: unknown): string => {
-  if (e instanceof Error) return e.message;
+  if (e instanceof Error) return e.message || e.name || "Erreur Bluetooth inconnue.";
   if (typeof e === "object" && e !== null) {
     const o = e as { message?: unknown; name?: unknown; code?: unknown };
     if (typeof o.message === "string" && o.message) return o.message;
