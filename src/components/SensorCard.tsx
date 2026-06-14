@@ -6,7 +6,7 @@ type SensorCardProps = {
   label: string;
   value: string;
   unit: string;
-  raw?: number;
+  raw?: number | null;
 };
 
 export function SensorCard({
@@ -27,8 +27,8 @@ export function SensorCard({
           <span className="text-3xl font-bold tabular-nums">{value}</span>
           <span className="text-sm text-muted-foreground">{unit}</span>
         </div>
-        {raw !== undefined && (
-          <p className="mt-1.5 text-xs text-muted-foreground/70">brut {raw}</p>
+        {raw != null && (
+          <p className="mt-1.5 text-xs text-muted-foreground">brut {raw}</p>
         )}
       </CardContent>
     </Card>

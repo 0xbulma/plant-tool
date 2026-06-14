@@ -14,8 +14,8 @@ import { SensorCard } from "@/components/SensorCard";
 import { useFlowerPower } from "@/hooks/useFlowerPower";
 import { isWebBluetoothAvailable } from "@/lib/flowerPower";
 
-const fmt = (n: number | undefined, digits = 1) =>
-  n === undefined ? "—" : n.toFixed(digits);
+const fmt = (n: number | null | undefined, digits = 1) =>
+  n == null ? "—" : n.toFixed(digits);
 
 function App() {
   const {
@@ -35,9 +35,9 @@ function App() {
   return (
     <div className="mx-auto min-h-dvh max-w-2xl px-5 py-8">
       <header className="text-center">
-        <div className="mb-2 inline-flex items-center gap-2 text-2xl font-semibold">
-          <Leaf className="size-6 text-primary" /> Flower Power
-        </div>
+        <h1 className="mb-2 inline-flex items-center gap-2 text-2xl font-semibold">
+          <Leaf className="size-6 text-primary" aria-hidden /> Flower Power
+        </h1>
         <p className="text-sm text-muted-foreground">
           Lecteur direct du capteur Parrot — sans compte ni cloud
         </p>
@@ -56,10 +56,14 @@ function App() {
         )}
       </div>
 
-      <div className="mb-6 flex justify-center">
+      <div
+        className="mb-6 flex justify-center"
+        role="status"
+        aria-live={status === "error" ? "assertive" : "polite"}
+      >
         {connected ? (
           <Badge>
-            <span className="size-2 rounded-full bg-primary" />
+            <span className="size-2 rounded-full bg-primary" aria-hidden />
             Connecté — {deviceName}
           </Badge>
         ) : status === "error" ? (
@@ -76,7 +80,11 @@ function App() {
         </p>
       )}
 
-      <div className="grid grid-cols-2 gap-3">
+      <div
+        className="grid grid-cols-2 gap-3"
+        aria-live="polite"
+        aria-label="Mesures du capteur"
+      >
         <SensorCard
           icon={Droplets}
           label="Humidité du sol"
@@ -109,7 +117,7 @@ function App() {
           icon={FlaskConical}
           label="Fertilité (EC)"
           unit="brut"
-          value={reading ? String(reading.soilEC) : "—"}
+          value={reading?.soilEC != null ? String(reading.soilEC) : "—"}
         />
         <SensorCard
           icon={Leaf}

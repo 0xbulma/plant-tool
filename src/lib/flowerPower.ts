@@ -49,24 +49,33 @@ export function convertSoilMoisture(raw: number): number {
   return clamp(moisture, 0, 60);
 }
 
-/** Luminosité (DLI), en mol/m²/jour. Approximation — afficher aussi le brut. */
+/**
+ * Luminosité (DLI), en mol/m²/jour.
+ *
+ * Formule reprise verbatim de `node-flower-power` (le `0.0864` = 86400 s/jour /
+ * 1e6). La relation est volontairement INVERSE : la caractéristique brute
+ * décroît quand la lumière augmente, donc l'exposant négatif est correct et
+ * conforme à toutes les implémentations connues du capteur — ne pas "corriger"
+ * en exposant positif. Reste une approximation : la valeur brute est affichée
+ * en parallèle dans l'UI pour permettre une recalibration sur matériel réel.
+ */
 export function convertSunlight(raw: number): number {
   if (raw <= 0) return 0;
   return 0.0864 * (192773.17 * raw ** -1.0606619);
 }
 
 export type SensorReading = {
-  soilMoisture: number;
-  soilTemperature: number;
-  airTemperature: number;
-  sunlight: number;
-  soilEC: number;
+  soilMoisture: number | null;
+  soilTemperature: number | null;
+  airTemperature: number | null;
+  sunlight: number | null;
+  soilEC: number | null;
   raw: {
-    soilMoisture: number;
-    soilTemperature: number;
-    airTemperature: number;
-    sunlight: number;
-    soilEC: number;
+    soilMoisture: number | null;
+    soilTemperature: number | null;
+    airTemperature: number | null;
+    sunlight: number | null;
+    soilEC: number | null;
   };
 };
 
@@ -106,9 +115,15 @@ export type LiveCharacteristics = {
 export async function connectFlowerPower(
   device: BluetoothDevice,
 ): Promise<LiveCharacteristics> {
-  const server = await device.gatt!.connect();
+  if (!device.gatt) {
+    throw new Error("Cet appareil n'expose pas de serveur GATT.");
+  }
+  const server = await device.gatt.connect();
   const live = await server.getPrimaryService(LIVE_SERVICE);
 
+  // A genuinely-absent characteristic stays undefined (readSensors reports it
+  // as null, not a fabricated 0). But if NONE of the live characteristics
+  // resolve, the device isn't a usable Flower Power — fail loudly.
   const chars: LiveCharacteristics = {
     soilMoisture: await live
       .getCharacteristic(CHARACTERISTIC.soilMoisture)
@@ -127,11 +142,27 @@ export async function connectFlowerPower(
       .catch(() => undefined),
   };
 
-  // Active la mesure en continu (période = 1 s).
+  const resolved = [
+    chars.soilMoisture,
+    chars.soilTemperature,
+    chars.airTemperature,
+    chars.sunlight,
+    chars.soilEC,
+  ].filter(Boolean).length;
+  if (resolved === 0) {
+    throw new Error(
+      "Aucune caractéristique de mesure trouvée — appareil incompatible.",
+    );
+  }
+
+  // Active la mesure en continu (période = 1 s). Best-effort : si l'écriture
+  // échoue, on le signale (les lectures resteront figées) sans bloquer.
   await live
     .getCharacteristic(CHARACTERISTIC.livePeriod)
     .then((c) => c.writeValue(Uint8Array.of(1)))
-    .catch(() => undefined);
+    .catch((e) =>
+      console.warn("Flower Power : impossible d'activer le live mode.", e),
+    );
 
   chars.battery = await server
     .getPrimaryService(BATTERY_SERVICE)
@@ -147,7 +178,7 @@ export async function readSensors(
 ): Promise<SensorReading> {
   const readRaw = async (
     c: BluetoothRemoteGATTCharacteristic | undefined,
-  ): Promise<number> => (c ? u16(await c.readValue()) : 0);
+  ): Promise<number | null> => (c ? u16(await c.readValue()) : null);
 
   const raw = {
     soilMoisture: await readRaw(chars.soilMoisture),
@@ -158,10 +189,12 @@ export async function readSensors(
   };
 
   return {
-    soilMoisture: convertSoilMoisture(raw.soilMoisture),
-    soilTemperature: convertTemperature(raw.soilTemperature),
-    airTemperature: convertTemperature(raw.airTemperature),
-    sunlight: convertSunlight(raw.sunlight),
+    soilMoisture: raw.soilMoisture === null ? null : convertSoilMoisture(raw.soilMoisture),
+    soilTemperature:
+      raw.soilTemperature === null ? null : convertTemperature(raw.soilTemperature),
+    airTemperature:
+      raw.airTemperature === null ? null : convertTemperature(raw.airTemperature),
+    sunlight: raw.sunlight === null ? null : convertSunlight(raw.sunlight),
     soilEC: raw.soilEC,
     raw,
   };

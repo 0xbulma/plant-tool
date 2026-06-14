@@ -63,8 +63,9 @@ src/
 ## Détails techniques
 
 UUID GATT et formules de conversion repris de la librairie de référence
-[`node-flower-power`](https://github.com/Parrot-Developers/node-flower-power)
-et de la [spec BLE officielle Parrot](https://developer.parrot.com/docs/FlowerPower/FlowerPower-BLE.pdf).
+[`node-flower-power`](https://github.com/sandeepmistry/node-flower-power) (le
+portail développeur officiel de Parrot a été décommissionné ; voir au besoin une
+[archive de la spec BLE](https://web.archive.org/web/2018/https://developer.parrot.com/docs/FlowerPower/FlowerPower-BLE.pdf)).
 Les valeurs **brutes** sont affichées sous chaque mesure pour permettre de
 recalibrer les formules si besoin (notamment luminosité et EC, marquées
 approximatives dans la lib d'origine).
