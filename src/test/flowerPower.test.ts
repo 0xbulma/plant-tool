@@ -39,6 +39,17 @@ function u8Char(value: number): BluetoothRemoteGATTCharacteristic {
   } as unknown as BluetoothRemoteGATTCharacteristic;
 }
 
+/** Stub characteristic whose readValue() yields a little-endian float32. */
+function f32Char(value: number): BluetoothRemoteGATTCharacteristic {
+  return {
+    readValue: async () => {
+      const dv = new DataView(new ArrayBuffer(4));
+      dv.setFloat32(0, value, true);
+      return dv;
+    },
+  } as unknown as BluetoothRemoteGATTCharacteristic;
+}
+
 describe("clamp", () => {
   it("borne les valeurs dans l'intervalle", () => {
     expect(clamp(5, 0, 10)).toBe(5);
@@ -120,6 +131,21 @@ describe("readSensors", () => {
     expect(r.soilTemperature).toBeCloseTo(10.71, 1);
     expect(r.soilMoisture).toBeGreaterThan(30); // brut 300 calibré ≈ 33 %
     expect(r.soilMoisture).toBeLessThan(37);
+  });
+
+  it("préfère les valeurs calibrées du capteur quand elles existent", async () => {
+    const r = await readSensors({
+      soilMoisture: u16Char(300), // brut → repli formule donnerait ~33 %
+      calibratedSoilMoisture: f32Char(54.5),
+      airTemperature: u16Char(727),
+      calibratedAirTemperature: f32Char(23.2),
+      sunlight: u16Char(23902),
+      calibratedSunlight: f32Char(0.42),
+    });
+    expect(r.raw.soilMoisture).toBe(300); // brut conservé pour l'affichage
+    expect(r.soilMoisture).toBeCloseTo(54.5, 1); // valeur calibrée prioritaire
+    expect(r.airTemperature).toBeCloseTo(23.2, 1);
+    expect(r.sunlight).toBeCloseTo(0.42, 2);
   });
 
   it("décode correctement un uint16 multi-octets (endianness)", async () => {

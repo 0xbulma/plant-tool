@@ -198,11 +198,22 @@ fallback in `calibration.md`.
 
 ## Open Questions
 
-- Does the target device's firmware actually expose `39e1fa0e`/`39e1fa0d`?
-  (Needs a one-off read of the firmware revision + a characteristic probe on real
-  hardware before committing Phase 1.)
-- Which calibrated characteristic better matches the published interpretation
-  bands — *Ec porous* (soil solution) or *Ecb* (bulk)? Default to *Ec porous*.
+- ~~Does the target device expose `39e1fa0e`/`39e1fa0d`?~~ **Answered (2026-06-14):
+  NO.** A GATT probe of the test device (Flower Power "Hawaii", firmware
+  `2016-09-14_hawaii-2.0.3`) shows the live service exposes `fa01–fa07`, `fa09`,
+  `fa0a`, `fa0b` — **no `fa0c`/`fa0d`/`fa0e`**. Calibrated EC is unavailable on
+  this hardware ⇒ **Phase 1 (Track A primary) is not viable here**; fertility
+  stays the relative index, and real mS/cm would require an EC pen (Track A
+  fallback). The `firmware ≥ 1.1.0 ⇒ calibrated EC` assumption does not hold for
+  Hawaii.
+- ~~The extra live characteristics `fa09`/`fa0a`/`fa0b` — what are they?~~
+  **Answered (2026-06-14):** read as float32 they are the sensor's **own
+  calibrated** measurements — `fa09` = soil moisture (% VWC), `fa0a` = air
+  temperature (°C), `fa0b` = light/DLI (mol/m²/j). Confirmed by matching `fa0a`
+  ≈ 23.2 °C and `fa0b` ≈ 0.42 to the raw-formula values; `fa09` by elimination
+  (Parrot calibrates moisture/temp/light, not EC). **`readSensors` now prefers
+  these** (with raw-formula + gain fallback). This supersedes the Track B gain as
+  the primary moisture source on devices that expose `fa09`.
 
 ## References
 
@@ -223,6 +234,18 @@ node-flower-power conversion under-reads ~3×. Adopted a general (not per-pot)
 one-point gain calibration in `convertSoilMoisture` (Track B):
 `SOIL_MOISTURE_CAL_RAW = 356` → `SOIL_MOISTURE_CAL_VWC = 55`. The two-point
 refinement (dry anchor) remains the deferred follow-up.
+
+### 2026-06-14 — Sensor's own calibrated channels wired as primary
+
+**Author:** @0xbulma
+
+A GATT probe of the Hawaii (fw 2.0.3) found **no** calibrated EC (`fa0d`/`fa0e`
+absent) — fertility stays the relative index — but the live service exposes the
+sensor's own calibrated **soil moisture (`fa09`)**, **air temperature (`fa0a`)**
+and **light/DLI (`fa0b`)** as float32. `readSensors` now **prefers these** when
+present, falling back to the raw formulas (and the one-point gain for moisture)
+otherwise. The gain calibration above is now the *fallback*, not the primary
+moisture source.
 
 <!--
 TIB conventions:

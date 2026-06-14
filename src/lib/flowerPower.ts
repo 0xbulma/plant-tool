@@ -15,6 +15,12 @@ export const CHARACTERISTIC = {
   airTemperature: "39e1fa04-84a8-11e2-afba-0002a5d5c51b",
   soilMoisture: "39e1fa05-84a8-11e2-afba-0002a5d5c51b",
   livePeriod: "39e1fa06-84a8-11e2-afba-0002a5d5c51b",
+  // Valeurs CALIBRÉES par le capteur (float32 little-endian), identifiées par
+  // sonde GATT sur un Flower Power « Hawaii » firmware 2.0.3 (cf. TIB calibration).
+  // L'EC (fa02) n'a PAS d'équivalent calibré → la fertilité reste brute/relative.
+  calibratedSoilMoisture: "39e1fa09-84a8-11e2-afba-0002a5d5c51b", // % VWC
+  calibratedAirTemperature: "39e1fa0a-84a8-11e2-afba-0002a5d5c51b", // °C
+  calibratedSunlight: "39e1fa0b-84a8-11e2-afba-0002a5d5c51b", // mol/m²/j (DLI)
 } as const;
 
 // UUID Bluetooth standard, écrits en 128 bits complets (forme canonique de
@@ -154,6 +160,10 @@ export type LiveCharacteristics = {
   sunlight?: BluetoothRemoteGATTCharacteristic;
   soilEC?: BluetoothRemoteGATTCharacteristic;
   battery?: BluetoothRemoteGATTCharacteristic;
+  // Canaux calibrés par le capteur (float32) — absents sur certains firmwares.
+  calibratedSoilMoisture?: BluetoothRemoteGATTCharacteristic;
+  calibratedAirTemperature?: BluetoothRemoteGATTCharacteristic;
+  calibratedSunlight?: BluetoothRemoteGATTCharacteristic;
 };
 
 /** Connecte le GATT, active le mode "live" et résout les caractéristiques. */
@@ -184,6 +194,15 @@ export async function connectFlowerPower(
       .catch(() => undefined),
     soilEC: await live
       .getCharacteristic(CHARACTERISTIC.soilEC)
+      .catch(() => undefined),
+    calibratedSoilMoisture: await live
+      .getCharacteristic(CHARACTERISTIC.calibratedSoilMoisture)
+      .catch(() => undefined),
+    calibratedAirTemperature: await live
+      .getCharacteristic(CHARACTERISTIC.calibratedAirTemperature)
+      .catch(() => undefined),
+    calibratedSunlight: await live
+      .getCharacteristic(CHARACTERISTIC.calibratedSunlight)
       .catch(() => undefined),
   };
 
@@ -225,6 +244,15 @@ export async function readSensors(
     c: BluetoothRemoteGATTCharacteristic | undefined,
   ): Promise<number | null> => (c ? u16(await c.readValue()) : null);
 
+  // Lit un canal CALIBRÉ (float32 little-endian) ; null si absent ou non fini.
+  const readFloat = async (
+    c: BluetoothRemoteGATTCharacteristic | undefined,
+  ): Promise<number | null> => {
+    if (!c) return null;
+    const v = (await c.readValue()).getFloat32(0, true);
+    return Number.isFinite(v) ? v : null;
+  };
+
   const raw = {
     soilMoisture: await readRaw(chars.soilMoisture),
     soilTemperature: await readRaw(chars.soilTemperature),
@@ -233,13 +261,34 @@ export async function readSensors(
     soilEC: await readRaw(chars.soilEC),
   };
 
+  // Valeurs calibrées par le capteur (prioritaires) ; sinon repli sur nos
+  // conversions à partir du brut. Le capteur Hawaii calibre humidité, température
+  // de l'air et lumière — mais PAS l'EC ni la température du sol.
+  const calSoilMoisture = await readFloat(chars.calibratedSoilMoisture);
+  const calAirTemperature = await readFloat(chars.calibratedAirTemperature);
+  const calSunlight = await readFloat(chars.calibratedSunlight);
+
   return {
-    soilMoisture: raw.soilMoisture === null ? null : convertSoilMoisture(raw.soilMoisture),
+    soilMoisture:
+      calSoilMoisture !== null
+        ? clamp(calSoilMoisture, 0, 60)
+        : raw.soilMoisture === null
+          ? null
+          : convertSoilMoisture(raw.soilMoisture),
     soilTemperature:
       raw.soilTemperature === null ? null : convertTemperature(raw.soilTemperature),
     airTemperature:
-      raw.airTemperature === null ? null : convertTemperature(raw.airTemperature),
-    sunlight: raw.sunlight === null ? null : convertSunlight(raw.sunlight),
+      calAirTemperature !== null
+        ? clamp(calAirTemperature, -10, 55)
+        : raw.airTemperature === null
+          ? null
+          : convertTemperature(raw.airTemperature),
+    sunlight:
+      calSunlight !== null
+        ? Math.max(0, calSunlight)
+        : raw.sunlight === null
+          ? null
+          : convertSunlight(raw.sunlight),
     soilEC: raw.soilEC,
     raw,
   };
