@@ -24,6 +24,9 @@ describe("PLANTS", () => {
       expect(p.optimalC.max).toBeLessThanOrEqual(p.heatLimitC);
       expect(p.vwc.min).toBeGreaterThanOrEqual(0);
       expect(p.vwc.max).toBeLessThanOrEqual(60); // borne capteur VWC
+      // Sur-arrosage : seuil critique au-dessus de l'idéal ET atteignable < 60 %.
+      expect(p.vwc.max).toBeLessThan(p.vwcCritical);
+      expect(p.vwcCritical).toBeLessThan(60);
     }
   });
 

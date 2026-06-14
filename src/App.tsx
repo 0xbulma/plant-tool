@@ -38,9 +38,11 @@ function App() {
   } = useFlowerPower();
 
   const [plantId, setPlantId] = useState<string>(() => {
-    if (typeof localStorage !== "undefined") {
+    try {
       const saved = localStorage.getItem(PLANT_STORAGE_KEY);
       if (saved && PLANTS.some((p) => p.id === saved)) return saved;
+    } catch {
+      /* stockage indisponible (Safari privé, quota) : on garde le défaut */
     }
     return PLANTS[0].id;
   });
@@ -53,11 +55,20 @@ function App() {
     }
   }, [plantId]);
 
+  // Horloge qui avance même hors connexion, pour que la lumière (modèle
+  // solaire), la saison et l'alerte gel restent à jour ; une fois connecté,
+  // `updatedAt` (rafraîchi ~3 s) prend le relais.
+  const [clock, setClock] = useState<Date>(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setClock(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   const connected = status === "connected";
   const supported = isWebBluetoothAvailable();
 
   const plant = getPlant(plantId) ?? PLANTS[0];
-  const now = updatedAt ?? new Date();
+  const now = updatedAt ?? clock;
   const evals = evaluatePlant(plant, reading, now);
   const growing = isGrowingSeason(now);
   const frost = frostAdvisory(plant, reading?.airTemperature ?? null, now);

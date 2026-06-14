@@ -110,6 +110,10 @@ export function clearSkyPPFD(elevationDeg: number): number {
   return ghi * PAR_FRACTION * UMOL_PER_JOULE; // → PPFD
 }
 
+// Cache borné : un lieu fixe (Paris) ne produit qu'une poignée de clés/jour ;
+// on évince la plus ancienne au-delà de quelques jours pour éviter une
+// croissance illimitée sur une session longue.
+const DLI_CACHE_MAX = 8;
 const dliCache = new Map<string, number>();
 
 /**
@@ -134,6 +138,10 @@ export function potentialDLI(loc: GeoLocation, date: Date): number {
     molPerM2 += (ppfd * stepMin * 60) / 1_000_000; // mol/m² sur l'intervalle
   }
 
+  if (dliCache.size >= DLI_CACHE_MAX) {
+    const oldest = dliCache.keys().next().value;
+    if (oldest !== undefined) dliCache.delete(oldest);
+  }
   dliCache.set(key, molPerM2);
   return molPerM2;
 }

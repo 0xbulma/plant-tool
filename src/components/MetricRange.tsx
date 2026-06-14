@@ -15,6 +15,22 @@ const STATUS_LABEL: Record<MetricStatus, string> = {
   na: "non évaluée",
 };
 
+// Repère NON coloré (glyphe + mot) du statut : le statut ne doit pas dépendre
+// de la seule couleur du curseur (WCAG 1.4.1, daltonisme).
+const STATUS_BADGE: Record<MetricStatus, string> = {
+  ok: "✓ dans la plage",
+  warn: "! hors plage",
+  bad: "✕ critique",
+  na: "",
+};
+
+const STATUS_TEXT_COLOR: Record<MetricStatus, string> = {
+  ok: "text-primary",
+  warn: "text-warning",
+  bad: "text-destructive",
+  na: "text-muted-foreground",
+};
+
 const pct = (value: number, min: number, max: number): number =>
   max <= min ? 0 : Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100));
 
@@ -61,7 +77,14 @@ export function MetricRange({ evaluation }: { evaluation: MetricEvaluation }) {
           />
         )}
       </div>
-      <p className="mt-1.5 text-xs text-muted-foreground">{caption}</p>
+      <p className="mt-1.5 text-xs text-muted-foreground">
+        {value != null && status !== "na" && (
+          <span className={cn("mr-1.5 font-medium", STATUS_TEXT_COLOR[status])}>
+            {STATUS_BADGE[status]}
+          </span>
+        )}
+        {caption}
+      </p>
     </div>
   );
 }

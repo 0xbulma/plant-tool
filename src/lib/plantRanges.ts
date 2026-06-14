@@ -43,37 +43,65 @@ export type MetricEvaluation = {
   note?: string;
 };
 
-/** Classe de fertilisation → bande sur l'indice relatif 0–100 (cf. fertilityIndex). */
-const FEEDER_INDEX: Record<FeederCategory, { min: number; max: number }> = {
-  light: { min: 25, max: 45 },
-  moderate: { min: 40, max: 65 },
-  heavy: { min: 55, max: 85 },
+/**
+ * Classe de fertilisation → bande sur l'indice relatif 0–100 (cf. fertilityIndex,
+ * où ~10 ≈ 1 mS/cm via l'indice 1771≈10 mS/cm). Cibles calées sur l'EC idéale des
+ * plantes en pot (0,5–2 mS/cm, pour-through NC State) ; `critical` = stress salin
+ * / brûlure (~3–4,8 mS/cm, plus tôt pour les peu gourmandes). Approximatif.
+ */
+const FEEDER_INDEX: Record<
+  FeederCategory,
+  { min: number; max: number; critical: number }
+> = {
+  light: { min: 5, max: 20, critical: 30 },
+  moderate: { min: 8, max: 25, critical: 38 },
+  heavy: { min: 12, max: 30, critical: 48 },
 };
+
+// Repos hivernal : on resserre les seuils d'excès (eau et engrais) — racines au
+// repos + froid = pourriture / sels accumulés — et on abaisse la cible d'humidité.
+const WINTER_BAND_DROP = 8; // % VWC : cible d'humidité plus sèche l'hiver
+const WINTER_WET_TIGHTEN = 6; // % VWC : alerte « trop humide » déclenchée plus tôt
+const WINTER_FERT_TIGHTEN = 8; // points d'indice : sur-fertilisation alertée plus tôt
+
+/** Note de repos hivernal hors saison de croissance, sinon aucune. */
+function seasonNote(growing: boolean, message: string): string | undefined {
+  return growing ? undefined : message;
+}
 
 function evaluateMoisture(plant: PlantProfile, value: number | null, now: Date): MetricEvaluation {
   const growing = isGrowingSeason(now);
-  // Grand pot : séchage lent → on tolère ~3 % plus bas. Repos hivernal : cible
-  // ~8 % plus basse (arroser peu pour éviter la pourriture).
-  let idealMin = plant.vwc.min - 3;
+  // Grand pot : séchage lent → on tolère ~3 % plus bas sur la borne basse.
+  let idealMin = Math.max(0, plant.vwc.min - 3);
   let idealMax = plant.vwc.max;
+  // Seuil de SUR-ARROSAGE : atteignable sous 60 % VWC (≈ capacité au champ du
+  // terreau) et resserré l'hiver. C'est le danger n°1 (pourriture racinaire).
+  let critical = plant.vwcCritical;
   if (!growing) {
-    idealMin -= 8;
-    idealMax -= 8;
+    idealMin = Math.max(0, idealMin - WINTER_BAND_DROP);
+    idealMax = Math.max(idealMin + 5, idealMax - WINTER_BAND_DROP);
+    critical -= WINTER_WET_TIGHTEN;
   }
-  idealMin = Math.max(0, idealMin);
 
   const base = { value, unit: "% VWC", axisMin: 0, axisMax: 60, idealMin, idealMax };
   if (value == null) return { ...base, status: "na" };
 
-  let status: MetricStatus = "ok";
-  if (value > idealMax + 8) status = "bad"; // détrempé : risque de pourriture
-  else if (value > idealMax) status = "warn";
-  else if (value < idealMin) {
-    // En repos hivernal, un sol plus sec est normal → simple avertissement.
-    status = growing && value < idealMin - 10 ? "bad" : "warn";
+  if (value >= critical) {
+    return { ...base, status: "bad", note: "Trop humide — risque de pourriture" };
   }
-  const note = growing ? undefined : "Repos hivernal — arroser peu";
-  return { ...base, status, note };
+  if (value > idealMax) {
+    return { ...base, status: "warn", note: "Un peu trop humide — laisser sécher" };
+  }
+  if (value < idealMin) {
+    // Le capteur surestime en sol sec : une lecture basse est déjà prudente. En
+    // repos hivernal, un sol plus sec est normal → on n'alerte pas.
+    return {
+      ...base,
+      status: growing ? "warn" : "ok",
+      note: growing ? "Trop sec — arroser" : "Repos hivernal — laisser sécher",
+    };
+  }
+  return { ...base, status: "ok", note: seasonNote(growing, "Repos hivernal — laisser sécher") };
 }
 
 function evaluateAirTemp(plant: PlantProfile, value: number | null): MetricEvaluation {
@@ -144,17 +172,30 @@ function evaluateFertilizer(
   rawEC: number | null,
   now: Date,
 ): MetricEvaluation {
-  const { min: idealMin, max: idealMax } = FEEDER_INDEX[plant.feeder];
+  const { min: idealMin, max: idealMax, critical } = FEEDER_INDEX[plant.feeder];
   const growing = isGrowingSeason(now);
   const base = { unit: "", axisMin: 0, axisMax: 100, idealMin, idealMax };
   if (rawEC == null) return { ...base, value: null, status: "na" };
 
-  const value = fertilityIndex(rawEC); // indice relatif 0–100
-  let status: MetricStatus = "ok";
-  if (value > idealMax) status = value > idealMax + 15 ? "bad" : "warn";
-  else if (value < idealMin) status = growing ? "warn" : "ok"; // hors-saison : bas = normal
-  const note = growing ? undefined : "Repos — ne pas fertiliser";
-  return { ...base, value, status, note };
+  const value = fertilityIndex(rawEC); // indice relatif 0–100 (~10 ≈ 1 mS/cm)
+  // Sur-fertilisation = stress salin / brûlure ; danger accru l'hiver (sels
+  // accumulés sans absorption) → seuil critique resserré.
+  const criticalNow = growing ? critical : critical - WINTER_FERT_TIGHTEN;
+  if (value >= criticalNow) {
+    return { ...base, value, status: "bad", note: "Trop fertilisé — risque de brûlure" };
+  }
+  if (value > idealMax) {
+    return {
+      ...base,
+      value,
+      status: "warn",
+      note: growing ? "Fertilité élevée" : "Repos — ne pas fertiliser",
+    };
+  }
+  if (growing && value < idealMin) {
+    return { ...base, value, status: "warn", note: "Fertilité faible — nourrir en saison" };
+  }
+  return { ...base, value, status: "ok", note: seasonNote(growing, "Repos — ne pas fertiliser") };
 }
 
 /** Évalue les 4 métriques suivies pour la plante et la lecture courante. */

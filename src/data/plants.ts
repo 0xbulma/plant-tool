@@ -1,24 +1,34 @@
 /**
  * Profils des plantes suivies — terrasse parisienne, grands pots.
  *
- * Provenance des valeurs (laissée en commentaire, non affichée dans l'UI) :
+ * Provenance des valeurs (commentaires, non affichés dans l'UI) :
  *
- *  • Catégorie d'exposition (plein soleil / mi-ombre) : RHS et Missouri
- *    Botanical Garden Plant Finder (directement publiée).
- *  • Bande DLI (mol/m²/jour) : MAPPING catégorie → bande, d'après la littérature
- *    serre Purdue/Michigan State (faible <10, moyen 10–20, fort 20–30+).
- *    Ce n'est PAS un DLI publié par espèce. Réf : Purdue Extension HO-238.
- *  • Rusticité / températures : zones USDA + tolérances au froid publiées
- *    (RHS, Missouri Bot. Garden, fiches espèces).
- *  • Bande d'humidité (% VWC) : MAPPING d'une préférence d'arrosage qualitative
- *    (RHS / Missouri Bot. Garden) vers une bande VWC, calée sur les repères de
- *    culture en conteneur (~40–60 % à saturation, ~25 % point de flétrissement).
- *    Les seuils VWC par espèce ne sont pas publiés horticolement.
- *  • Classe de fertilisation (léger / modéré / gourmand) : RHS / extensions.
- *    L'EC en mS/cm est indicatif (cf. fertilityIndex, capteur non calibré).
+ *  • Exposition (plein soleil / mi-ombre) : RHS, Missouri Botanical Garden.
+ *  • Bande DLI (mol/m²/jour) : MAPPING catégorie → bande (Purdue/MSU : faible <10,
+ *    moyen 10–20, fort 20–30+). Pas un DLI publié par espèce.
+ *  • Rusticité / températures : zones USDA + tolérances publiées (RHS, MBG).
+ *
+ *  • HUMIDITÉ DU SOL (% VWC) — le point le plus sensible (le sur-arrosage tue) :
+ *    Le capteur Parrot mesure le VWC sur une échelle native 0–60 % (±3 %, cf.
+ *    Xaver et al. 2020, Geosci. Instrum. 9:117). Sur un terreau tourbeux, cette
+ *    échelle couvre quasi exactement le réel : ~60 % ≈ capacité au champ (sol
+ *    saturé, porosité à l'air < 10 % → asphyxie/pourriture racinaire) et ~25 % ≈
+ *    point de flétrissement (UC ANR / Nursery Mgmt). Le capteur SURESTIME en sol
+ *    sec : l'extrémité humide (le danger) est donc la plus fiable.
+ *    `vwc` = bande idéale (saison de croissance). `vwcCritical` = seuil de
+ *    sur-arrosage (« détrempé/pourriture »), TOUJOURS atteignable sous 60 %.
+ *    Classement de sensibilité au sur-arrosage (RHS/MBG, du + au − sensible) :
+ *    olivier > citronnier > lilas > érable du Japon > magnolia — d'où des seuils
+ *    `vwcCritical` croissants dans cet ordre.
+ *
+ *  • FERTILITÉ : le capteur n'expose qu'une EC brute NON calibrée (aucune
+ *    conversion raw→mS/cm fiable ; cf. fertilityIndex). `feeder` règle la bande ;
+ *    `ecMScm` est purement documentaire.
  *
  * Sources principales :
- *  Citrus   https://www.rhs.org.uk/plants/citrus/growing-guide
+ *  Capteur  https://gi.copernicus.org/articles/9/117/2020/
+ *  Substrat https://www.nurserymag.com/article/moisture-retention-curve/
+ *  Citrus   https://www.rhs.org.uk/fruit/citrus/grow-your-own
  *  Lilas    https://www.missouribotanicalgarden.org/PlantFinder/PlantFinderDetails.aspx?taxonid=282932
  *  Olivier  https://www.missouribotanicalgarden.org/PlantFinder/PlantFinderDetails.aspx?taxonid=283004
  *  Magnolia https://www.rhs.org.uk/plants/magnolia/growing-guide
@@ -42,8 +52,10 @@ export type PlantProfile = {
   optimalC: { min: number; max: number };
   /** Vrai si gélive en pot à Paris → à rentrer / protéger l'hiver. */
   frostTender: boolean;
-  /** Bande d'humidité du sol cible, % VWC. */
+  /** Bande d'humidité du sol idéale (saison de croissance), % VWC. */
   vwc: { min: number; max: number };
+  /** Seuil de sur-arrosage / détrempé (% VWC) — pourriture racinaire. < 60. */
+  vwcCritical: number;
   /** Classe de fertilisation (gourmandise en engrais). */
   feeder: FeederCategory;
   /** EC indicatif en mS/cm (documentaire — non affiché tel quel). */
@@ -58,17 +70,18 @@ export const PLANTS: PlantProfile[] = [
     nameFr: "Citronnier",
     nameLatin: "Citrus × limon",
     emoji: "🍋",
-    // Plein soleil (avec ombrage l'après-midi très chaud) → DLI fort.
-    dli: { min: 20, max: 30 },
-    minTempC: -3, // dégâts sous ~-3 °C ; à rentrer dès <5 °C — non rustique à Paris
+    dli: { min: 20, max: 30 }, // plein soleil (ombrage l'après-midi très chaud)
+    minTempC: -3, // dégâts sous ~-3 °C ; rentrer dès <5 °C — non rustique à Paris
     heatLimitC: 38,
     optimalC: { min: 21, max: 30 },
     frostTender: true,
-    // « Garder humide sans détremper, laisser sécher la surface » → modéré.
-    vwc: { min: 35, max: 52 },
+    // RHS : « garder juste humide, laisser sécher la surface l'hiver, ne jamais
+    // laisser le pot dans l'eau (pourriture) ». Sensible au sur-arrosage.
+    vwc: { min: 25, max: 42 },
+    vwcCritical: 50,
     feeder: "heavy", // agrume gourmand : nourrir toutes les 4–6 sem. en saison
     ecMScm: { min: 1.5, max: 2.5 },
-    note: "Non rustique : rentrer avant les gelées (hiverner >5 °C). Gourmand en engrais en saison.",
+    note: "Non rustique : rentrer avant les gelées (>5 °C). Sur-arrosage hivernal = pourriture.",
   },
   {
     id: "lilas",
@@ -80,11 +93,12 @@ export const PLANTS: PlantProfile[] = [
     heatLimitC: 32,
     optimalC: { min: 15, max: 25 },
     frostTender: false,
-    // « Légèrement humide mais jamais détrempé ; n'aime pas les pieds mouillés. »
-    vwc: { min: 30, max: 48 },
+    // MBG : « humidité moyenne, bien drainé, éviter les sols détrempés ».
+    vwc: { min: 28, max: 45 },
+    vwcCritical: 52,
     feeder: "light", // peu gourmand : trop d'azote = feuilles, peu de fleurs
     ecMScm: { min: 1.0, max: 1.5 },
-    note: "Rustique. Craint l'excès d'eau et d'engrais (sinon peu de fleurs).",
+    note: "Rustique. Craint l'excès d'eau et d'azote (sinon peu de fleurs).",
   },
   {
     id: "olivier",
@@ -95,12 +109,14 @@ export const PLANTS: PlantProfile[] = [
     minTempC: -9, // cultivars rustiques ~-9/-10 °C ; en pot, protéger sous ~-5 °C
     heatLimitC: 40,
     optimalC: { min: 20, max: 30 },
-    frostTender: true, // en pot à Paris : limite de rusticité, protéger l'hiver
-    // « Tolérant à la sécheresse, laisser bien sécher entre deux arrosages. »
-    vwc: { min: 20, max: 40 },
+    frostTender: true,
+    // Le PLUS sensible au sur-arrosage : « n'aime pas les pieds mouillés »,
+    // laisser bien sécher, pas d'arrosage l'hiver (RHS/MBG). Bande la plus basse.
+    vwc: { min: 15, max: 35 },
+    vwcCritical: 46,
     feeder: "light",
     ecMScm: { min: 1.0, max: 1.8 },
-    note: "Méditerranéen : laisser sécher entre arrosages. Protéger le pot sous -5 °C.",
+    note: "Méditerranéen : laisser bien sécher. Sur-arrosage = cause n°1 de dépérissement.",
   },
   {
     id: "magnolia",
@@ -112,24 +128,28 @@ export const PLANTS: PlantProfile[] = [
     heatLimitC: 32,
     optimalC: { min: 15, max: 25 },
     frostTender: false,
-    // « Garder régulièrement humide mais drainé, ni sec ni détrempé. »
-    vwc: { min: 38, max: 55 },
+    // MBG : « humidité régulière, bien drainé, intolérant aux extrêmes (sec OU
+    // détrempé) ». Le moins sensible au sur-arrosage, mais jamais détrempé.
+    vwc: { min: 35, max: 52 },
+    vwcCritical: 57,
     feeder: "moderate",
     ecMScm: { min: 1.2, max: 2.0 },
-    note: "Rustique. Sol frais et régulier ; éviter le plein sud (débourrement trop précoce).",
+    note: "Rustique. Sol frais et régulier ; ni sec ni détrempé.",
   },
   {
     id: "erable-japon",
     nameFr: "Érable du Japon",
     nameLatin: "Acer palmatum",
     emoji: "🍁",
-    dli: { min: 8, max: 15 }, // mi-ombre / ombre tamisée (soleil brûlant = feuilles grillées)
+    dli: { min: 8, max: 15 }, // mi-ombre / ombre tamisée (soleil chaud = brûlure)
     minTempC: -18, // rustique (zone 5/6)
-    heatLimitC: 30, // brûlure du feuillage en plein soleil chaud
+    heatLimitC: 30,
     optimalC: { min: 15, max: 22 },
     frostTender: false,
-    // « Humidité régulière mais jamais détrempé ; racines superficielles. »
-    vwc: { min: 38, max: 55 },
+    // RHS/MBG : « humide mais bien drainé, jamais détrempé » ; risque premier =
+    // dessèchement/brûlure plutôt que pourriture. Humidité régulière.
+    vwc: { min: 33, max: 50 },
+    vwcCritical: 56,
     feeder: "light",
     ecMScm: { min: 1.0, max: 1.5 },
     note: "Mi-ombre : éviter le soleil de l'après-midi (brûlure). Sol frais, jamais détrempé.",

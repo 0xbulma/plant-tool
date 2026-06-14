@@ -3,6 +3,7 @@ import { PARIS } from "@/lib/location";
 import {
   clearSkyPPFD,
   dayLengthHours,
+  equationOfTime,
   potentialDLI,
   solarDeclination,
   solarElevation,
@@ -30,6 +31,22 @@ describe("solarDeclination", () => {
     expect(Math.abs(solarDeclination(EQUINOX) * (180 / Math.PI))).toBeLessThan(
       1.5,
     );
+  });
+});
+
+describe("equationOfTime", () => {
+  it("reproduit les extrêmes annuels connus (minutes)", () => {
+    // ~ -14 min à la mi-février, ~ +16 min début novembre (NOAA).
+    expect(equationOfTime(new Date(Date.UTC(2026, 1, 11, 12)))).toBeGreaterThan(
+      -16,
+    );
+    expect(equationOfTime(new Date(Date.UTC(2026, 1, 11, 12)))).toBeLessThan(
+      -12,
+    );
+    expect(equationOfTime(new Date(Date.UTC(2026, 10, 3, 12)))).toBeGreaterThan(
+      14,
+    );
+    expect(equationOfTime(new Date(Date.UTC(2026, 10, 3, 12)))).toBeLessThan(18);
   });
 });
 

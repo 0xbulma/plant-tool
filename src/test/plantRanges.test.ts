@@ -30,16 +30,17 @@ const SUMMER_NOON_UTC = new Date(Date.UTC(2026, 6, 15, 11, 0));
 const WINTER_NIGHT_UTC = new Date(Date.UTC(2026, 0, 15, 2, 0));
 
 describe("humidité du sol", () => {
-  it("classe correctement dans / au-dessus / très en dessous de la bande", () => {
+  it("classe dans / trop humide / détrempé / trop sec", () => {
     const m = (v: number) =>
       evaluatePlant(plant("magnolia"), makeReading({ soilMoisture: v }), JULY)
         .soilMoisture;
-    expect(m(45).status).toBe("ok"); // 35–55 en été
-    expect(m(65).status).toBe("bad"); // détrempé
-    expect(m(20).status).toBe("bad"); // très sec en pleine croissance
+    expect(m(45).status).toBe("ok"); // idéal 35–52 en été
+    expect(m(54).status).toBe("warn"); // un peu trop humide (>52, <57)
+    expect(m(58).status).toBe("bad"); // détrempé (≥57) — pourriture
+    expect(m(20).status).toBe("warn"); // trop sec : avertissement, pas critique
   });
 
-  it("abaisse la cible en repos hivernal (date-dépendant)", () => {
+  it("abaisse la cible et resserre le seuil critique en repos hivernal", () => {
     const summer = evaluatePlant(
       plant("magnolia"),
       makeReading({ soilMoisture: 45 }),
@@ -52,7 +53,33 @@ describe("humidité du sol", () => {
     ).soilMoisture;
     expect(summer.idealMax).toBeGreaterThan(winter.idealMax);
     expect(summer.idealMin).toBeGreaterThan(winter.idealMin);
-    expect(winter.note).toMatch(/repos/i);
+    // Même lecture (52 %) : correcte l'été, critique l'hiver (resserrement).
+    const s52 = evaluatePlant(plant("magnolia"), makeReading({ soilMoisture: 52 }), JULY).soilMoisture;
+    const w52 = evaluatePlant(plant("magnolia"), makeReading({ soilMoisture: 52 }), JANUARY).soilMoisture;
+    expect(s52.status).toBe("ok");
+    expect(w52.status).toBe("bad");
+    // En hiver, une plante bien dans la bande renvoie la note de repos.
+    const winterOk = evaluatePlant(plant("magnolia"), makeReading({ soilMoisture: 35 }), JANUARY).soilMoisture;
+    expect(winterOk.status).toBe("ok");
+    expect(winterOk.note).toMatch(/repos/i);
+  });
+});
+
+describe("sur-arrosage (sécurité)", () => {
+  it("déclenche 'bad' (pourriture) sous le plafond capteur de 60 % pour chaque plante", () => {
+    for (const id of ["citronnier", "lilas", "olivier", "magnolia", "erable-japon"]) {
+      const ev = evaluatePlant(plant(id), makeReading({ soilMoisture: 59 }), JULY)
+        .soilMoisture;
+      expect(ev.status).toBe("bad");
+      expect(ev.note).toMatch(/pourriture/i);
+    }
+  });
+
+  it("alerte plus tôt pour l'olivier (le plus sensible) que pour le magnolia", () => {
+    const olive = evaluatePlant(plant("olivier"), makeReading({ soilMoisture: 47 }), JULY).soilMoisture;
+    const magnolia = evaluatePlant(plant("magnolia"), makeReading({ soilMoisture: 47 }), JULY).soilMoisture;
+    expect(olive.status).toBe("bad"); // 47 ≥ 46 (seuil critique olivier)
+    expect(magnolia.status).not.toBe("bad"); // 47 dans la bande magnolia
   });
 });
 
@@ -64,6 +91,7 @@ describe("température de l'air", () => {
     expect(t(25).status).toBe("ok"); // optimum 21–30
     expect(t(15).status).toBe("warn"); // sous l'optimum mais sans danger
     expect(t(-5).status).toBe("bad"); // sous le minimum (-3 °C)
+    expect(t(40).status).toBe("bad"); // au-dessus de la limite de chaleur (38 °C)
   });
 });
 
@@ -90,27 +118,28 @@ describe("lumière (heure / date / lieu)", () => {
 });
 
 describe("fertilité (indice relatif)", () => {
-  it("place un gourmand (citronnier) dans la bande haute", () => {
-    const f = evaluatePlant(
-      plant("citronnier"),
-      makeReading({ soilEC: 1400 }), // indice ≈ 70/100
-      JULY,
-    ).fertilizer;
+  it("place une lecture modérée dans la bande d'un gourmand (citronnier)", () => {
+    // soilEC 350 → indice ~20 ; bande gourmand 12–30.
+    const f = evaluatePlant(plant("citronnier"), makeReading({ soilEC: 350 }), JULY)
+      .fertilizer;
     expect(f.status).toBe("ok");
   });
 
-  it("signale un excès pour un peu-gourmand (lilas)", () => {
-    const f = evaluatePlant(plant("lilas"), makeReading({ soilEC: 1400 }), JULY)
-      .fertilizer;
-    expect(f.status).toBe("bad"); // bien au-dessus de la bande légère
+  it("signale la sur-fertilisation (stress salin / brûlure)", () => {
+    // Peu-gourmand (lilas, critique 30) et gourmand (citronnier, critique 48).
+    expect(
+      evaluatePlant(plant("lilas"), makeReading({ soilEC: 700 }), JULY).fertilizer
+        .status,
+    ).toBe("bad"); // indice ~40 ≥ 30
+    expect(
+      evaluatePlant(plant("citronnier"), makeReading({ soilEC: 1000 }), JULY)
+        .fertilizer.status,
+    ).toBe("bad"); // indice ~56 ≥ 48
   });
 
-  it("tolère un indice bas en repos hivernal", () => {
-    const f = evaluatePlant(
-      plant("lilas"),
-      makeReading({ soilEC: 200 }),
-      JANUARY,
-    ).fertilizer;
+  it("tolère un indice bas en repos hivernal (ne pas fertiliser)", () => {
+    const f = evaluatePlant(plant("lilas"), makeReading({ soilEC: 200 }), JANUARY)
+      .fertilizer;
     expect(f.status).toBe("ok");
     expect(f.note).toMatch(/repos/i);
   });
