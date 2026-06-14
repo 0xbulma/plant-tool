@@ -17,8 +17,14 @@ cloud Parrot (l'app officielle ayant disparu).
 - 🌡️ Température du sol (°C)
 - 🌤️ Température de l'air (°C)
 - ☀️ Luminosité (mol/m²/j, approximative)
-- 🧪 Fertilité / EC (valeur brute)
+- 🧪 Fertilité (indice relatif /100, dérivé de l'EC brute)
 - 🔋 Niveau de batterie
+
+Un **sélecteur de plante** (citronnier, lilas, olivier, magnolia, érable du
+Japon) ajoute pour chaque mesure un **curseur** indiquant si la valeur est dans
+la plage idéale. Les cibles sont calculées selon l'heure, la date et le lieu
+(Paris) : modèle solaire pour la lumière, saison pour l'arrosage et la
+fertilisation, alerte gel pour les plantes gélives.
 
 ## Démarrage
 
@@ -52,13 +58,28 @@ Vercel, GitHub Pages, Netlify… (HTTPS automatique, donc Web Bluetooth marche).
 
 ```
 src/
-  lib/flowerPower.ts        UUID GATT, formules de conversion, connexion BLE
-  hooks/useFlowerPower.ts   état React + polling des mesures (3 s)
-  components/ui/            primitives shadcn (button, card, badge)
-  components/SensorCard.tsx carte de mesure
-  App.tsx                   tableau de bord
-  test/                     tests Vitest (conversions + rendu)
+  lib/flowerPower.ts            UUID GATT, conversions, connexion BLE, indice de fertilité
+  lib/solar.ts                  modèle solaire NOAA (élévation, PPFD/DLI ciel clair)
+  lib/season.ts                 saison de croissance / fenêtre de gel (Paris)
+  lib/plantRanges.ts            évaluation « dans la plage idéale ? » par métrique
+  lib/location.ts               coordonnées de Paris
+  data/plants.ts                profils des plantes (plages idéales, sources citées)
+  hooks/useFlowerPower.ts       état React + polling des mesures (3 s)
+  components/ui/                primitives shadcn (button, card, badge)
+  components/SensorCard.tsx     carte de mesure
+  components/PlantSelector.tsx  sélecteur de plante
+  components/MetricRange.tsx    jauge de plage idéale (curseur)
+  App.tsx                       tableau de bord
+  test/                         tests Vitest (conversions + rendu)
 ```
+
+## Modèle de soin des plantes
+
+Les plages idéales par plante, leur justification (botanique + science du
+substrat + spécificités du capteur Parrot) et la procédure pour **ajouter une
+plante** sont documentées dans
+[`docs/plant-care/`](docs/plant-care/README.md) — un guide général
+(implémenteur) + un fichier par plante.
 
 ## Détails techniques
 
