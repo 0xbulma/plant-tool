@@ -1,0 +1,223 @@
+# TIB-2026-06-14: Calibrate watering and fertilizer thresholds against ground truth
+
+| Field             | Value                                              |
+| ----------------- | -------------------------------------------------- |
+| **Status**        | Proposed                                           |
+| **Date**          | 2026-06-14                                         |
+| **Author**        | @0xbulma                                           |
+| **Scope**         | App: flower-power-reader                            |
+
+---
+
+## Context
+
+The plant selector evaluates four sensor metrics against per-plant "ideal"
+ranges (see [`docs/plant-care/`](../plant-care/README.md)). Two of those ranges —
+**soil moisture (% VWC)** and **fertility (soil EC)** — are currently **reasoned
+mappings, not measured calibrations**, and the user has flagged correctness here
+as critical (over-watering kills potted plants).
+
+What we established while building them:
+
+- **Moisture.** The Parrot 0–60 % VWC scale is a *calibrated* output, but it was
+  calibrated against mineral silty-clay-loam, **over-reads in dry soil**, and is
+  only accurate at the wet end (Xaver/Esposito et al. 2020). Our per-plant `vwc`
+  bands and `vwcCritical` thresholds are mapped from documented watering
+  preferences + an over-watering sensitivity ranking — defensible, but not
+  verified against the actual water status of any specific pot.
+- **Fertility.** Worse: the raw soil-EC characteristic (`39e1fa02`) is
+  **uncalibrated**. `node-flower-power` ships `// TODO: convert raw (0-1771) to
+  0 to 10 (mS/cm)` and never implemented it. Our index is `raw / 1771 × 100` —
+  a relative signal anchored to that documented hint, **not a physical mS/cm
+  value**. No amount of constant-tuning makes it physically correct.
+
+Decision driver: the user wants the per-plant **state to remain hardcoded** (no
+live, per-pot user-calibration UI for now), but wants a recorded path to make
+the watering and fertility numbers *verifiably* correct in a future upgrade.
+
+## Goals / Non-Goals
+
+**Goals**
+
+- Define a deterministic, **hardcoded-compatible** path to make fertility a real
+  physical measurement (mS/cm) rather than an uncalibrated relative index.
+- Define a repeatable, low-cost procedure to **validate** the moisture
+  thresholds against ground truth, and to bake *measured* anchors into the
+  hardcoded plant profiles when available.
+- Preserve the over-watering safety invariant (critical threshold reachable
+  below 60 % VWC) throughout.
+
+**Non-Goals**
+
+- **No live per-pot user-calibration feature.** State stays hardcoded in
+  `src/data/plants.ts`; we do not add a calibration capture UI or per-device
+  `localStorage` state in this upgrade.
+- Not replacing or re-flashing the sensor, and not adding a live weather feed
+  (clear-sky light model is out of scope here).
+- Not changing the temperature/light models — this TIB is moisture + fertility.
+
+## Current Solution
+
+Hardcoded, in `src/data/plants.ts` + `src/lib/plantRanges.ts`:
+
+- Moisture: `vwc: {min,max}` ideal band + `vwcCritical` (over-watering), with
+  winter tightening. Mapped from watering preference + sensitivity rank.
+- Fertility: `fertilityIndex(raw) = clamp(raw / 1771 × 100, 0, 100)` →
+  `FEEDER_INDEX` bands (light/moderate/heavy) on the 0–100 index. The card is
+  labelled "indice" `/100`; the raw value is shown alongside for recalibration.
+
+By default (do nothing): fertility stays a relative index that *looks* like a
+pass/fail gauge but cannot back up an absolute claim, and moisture bands stay
+unverified estimates.
+
+## Proposed Solution
+
+Two independent tracks, both keeping the profile state hardcoded.
+
+### Track A — Fertility: read the device's calibrated EC characteristic (primary)
+
+Firmware ≥ 1.1.0 exposes calibrated EC as **float32, in real units**:
+
+- `39e1fa0e` — *calibrated Ec porous* (preferred; soil-solution EC)
+- `39e1fa0d` — *calibrated Ecb* (bulk EC)
+
+Plan:
+
+1. At connect time, attempt to resolve `39e1fa0e` (then `39e1fa0d`) from the live
+   service. Read as `Float32` (little-endian).
+2. If present, expose `soilEcMScm: number | null` on `SensorReading` and gate
+   fertility on **hardcoded, published mS/cm bands** instead of the relative
+   index. Authoritative bands (container ornamentals): ideal ≈ 0.5–2.0 mS/cm
+   (pour-through, NC State); "too high" warn ≈ 2 mS/cm (pour-through) / 3.5 mS/cm
+   (SME); salt-stress/critical ≈ 5 mS/cm SME, lower for salt-sensitive feeders.
+   Keep the feeder-class differentiation (light feeders warn earlier).
+3. If the characteristic is **absent**, fall back to the current relative index,
+   and surface a small "relatif / non calibré" hint so the UI never overclaims.
+
+This is fully compatible with "hardcoded state": it is a fixed code path keyed on
+device capability, not a user calibration step. It is the single change most
+likely to make fertility genuinely correct.
+
+### Track B — Moisture: validate, then bake measured anchors (secondary)
+
+The sensor % is already calibrated; the work is to verify *our thresholds* and,
+where measured, replace the mapped band with a measured one — still hardcoded.
+
+Procedure (documented in a new `docs/plant-care/calibration.md`):
+
+1. **Two-point per substrate.** Water to free drainage, wait ~30 min, read the
+   sensor → that is **container capacity** for this mix; `vwcCritical` is set
+   just below it. Dry to first wilt, read → dry floor. Band sits between.
+2. **Gravimetric cross-check (gold standard).** Weigh the pot saturated-and-
+   drained vs oven/air-dry; compute true VWC from weight at several points and
+   compare to the sensor to confirm the displayed % (and detect the dry
+   over-read). Adjust the band to measured values.
+3. Where a measured container-capacity/wilting pair exists for the app's
+   reference substrate, **update the hardcoded `vwc`/`vwcCritical`** for the
+   affected plants and cite the measurement in the per-plant doc.
+
+The over-watering invariant (`vwcCritical < 60`, asserted in
+`src/test/plantRanges.test.ts`) must continue to hold after any retune.
+
+### Implementation Phases
+
+- **Phase 1 — Fertility calibrated read (Track A):** resolve `39e1fa0e`/`fa0d`,
+  add `soilEcMScm` to `SensorReading`, gate on hardcoded mS/cm bands with
+  graceful fallback + "non calibré" hint. Ship behind capability detection.
+- **Phase 2 — Calibration procedure doc (Track B):** write
+  `docs/plant-care/calibration.md` (two-point + gravimetric + EC-pen pour-through).
+- **Phase 3 — Bake measured anchors:** once measured on real hardware, update the
+  hardcoded `vwc`/`vwcCritical` (and fertility bands if EC-pen calibrated) and
+  cite measurements in the per-plant docs.
+
+## Considered Alternatives
+
+### Alternative 1: Hardcode a `raw → mS/cm` conversion formula
+
+Derive fertility mS/cm from the raw `39e1fa02` value with a fixed formula (e.g.
+the linear `raw / 177`).
+
+**Why rejected:** The TODO hint (`0–1771 ≈ 0–10 mS/cm`) is unvalidated and the
+true response is non-linear and temperature/moisture-dependent. A hardcoded
+formula would present a *fabricated* physical number — exactly the false
+precision we want to avoid. The device's own calibrated characteristic is the
+honest source.
+
+### Alternative 2: Live per-pot user calibration (capture "saturé"/"sec" in the UI)
+
+Let the user tap to record container-capacity and dry readings per pot, store in
+`localStorage`, derive per-pot bands.
+
+**Why rejected (for now):** The user explicitly wants the state hardcoded. This
+is recorded under Future Considerations as a possible later feature, not part of
+this upgrade.
+
+### Alternative 3: Manual EC-pen calibration baked into constants
+
+Use a cheap EC pen + pour-through to build a `raw → mS/cm` curve for the app's
+reference substrate and hardcode it.
+
+**Why rejected as primary (kept as fallback):** Viable when firmware lacks the
+calibrated characteristic, but it is substrate-specific and laborious. Track A
+(device calibrated value) is preferred when available; this is the documented
+fallback in `calibration.md`.
+
+## Assumptions & Constraints
+
+- The Parrot firmware exposes `39e1fa0e`/`39e1fa0d` only on **≥ 1.1.0**; older
+  firmware forces the relative-index fallback. Must detect, not assume.
+- Even the device's calibrated EC is a probe estimate, not a lab extract — bands
+  remain guidance with a feeder-sensitivity and winter caveat.
+- Moisture calibration is **per substrate**; measured anchors apply to the app's
+  reference potting mix, not arbitrary soils.
+- Over-watering remains the critical failure mode; conservatism is preserved.
+
+## Dependencies
+
+- Parrot Flower Power BLE spec (calibrated EC characteristics) and
+  [`node-flower-power`](https://github.com/sandeepmistry/node-flower-power).
+- Reads firmware revision (`0x2a26`) to gate Track A.
+
+## Observability
+
+- Log/show both the **raw** EC value and the **calibrated** mS/cm (when present)
+  so readings can be recalibrated and the fallback path is auditable.
+- Surface the active fertility mode in the UI ("mS/cm calibré" vs "indice
+  relatif") so the data-confidence level is never hidden.
+
+## Future Considerations
+
+- **Live per-pot calibration** (Alternative 2) if hardcoded anchors prove too
+  coarse across pots/substrates.
+- Per-substrate moisture profiles if the user runs markedly different mixes.
+- A cached "calibrated EC absent" flag to avoid re-probing each connect.
+
+## Open Questions
+
+- Does the target device's firmware actually expose `39e1fa0e`/`39e1fa0d`?
+  (Needs a one-off read of the firmware revision + a characteristic probe on real
+  hardware before committing Phase 1.)
+- Which calibrated characteristic better matches the published interpretation
+  bands — *Ec porous* (soil solution) or *Ecb* (bulk)? Default to *Ec porous*.
+
+## References
+
+- [Plant-care model — implementer's guide](../plant-care/README.md)
+- Parrot Flower Power evaluation — <https://gi.copernicus.org/articles/9/117/2020/>
+- node-flower-power — <https://github.com/sandeepmistry/node-flower-power>
+- EC pour-through interpretation (NC State) — <https://content.ces.ncsu.edu/the-pour-through-extraction-procedure-a-nutrient-management-tool-for-nursery-crops>
+- EC SME interpretation (UConn / Warncke) — <https://soiltesting.cahnr.uconn.edu/interpretation-of-sme-results-for-greenhouse-media/>
+
+<!--
+TIB conventions:
+- Once accepted, do not substantively edit this TIB. If the decision needs to change,
+  create a new TIB that supersedes this one and update the Status/Superseded by fields.
+- Addenda may be appended to record operational updates that affect
+  how the TIB is applied without changing the decision itself.
+- TIB identifiers use CalVer (YYYY-MM-DD) based on the date the TIB was first drafted.
+- A TIB is a *proposal* until its Status becomes Accepted. Once accepted, the rule the
+  TIB decides on is codified in the relevant section of your project's central
+  conventions doc (e.g., AGENTS.md or CLAUDE.md); the TIB stays as the dated record
+  of how the decision was reached. TIBs feed the conventions doc — they do not
+  override it.
+-->
