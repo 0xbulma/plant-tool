@@ -6,6 +6,8 @@ import {
   convertSoilMoisture,
   convertSunlight,
   convertTemperature,
+  EC_RAW_FULL_SCALE,
+  fertilityIndex,
   isWebBluetoothAvailable,
   LIVE_SERVICE,
   readBatteryLevel,
@@ -197,5 +199,18 @@ describe("connectFlowerPower", () => {
     expect(chars.soilMoisture).toBeDefined();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe("fertilityIndex", () => {
+  it("normalise l'EC brute sur une échelle relative 0–100", () => {
+    expect(fertilityIndex(0)).toBe(0);
+    expect(fertilityIndex(EC_RAW_FULL_SCALE)).toBe(100);
+    expect(fertilityIndex(EC_RAW_FULL_SCALE / 2)).toBe(50);
+  });
+
+  it("borne l'indice entre 0 et 100", () => {
+    expect(fertilityIndex(2 * EC_RAW_FULL_SCALE)).toBe(100);
+    expect(fertilityIndex(-500)).toBe(0);
   });
 });

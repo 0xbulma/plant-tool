@@ -1,5 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { MetricRange } from "@/components/MetricRange";
+import type { MetricEvaluation } from "@/lib/plantRanges";
 
 type SensorCardProps = {
   icon: LucideIcon;
@@ -7,6 +9,8 @@ type SensorCardProps = {
   value: string;
   unit: string;
   raw?: number | null;
+  /** Si fourni, affiche une jauge « dans la plage idéale ? » pour la plante. */
+  range?: MetricEvaluation | null;
 };
 
 export function SensorCard({
@@ -15,6 +19,7 @@ export function SensorCard({
   value,
   unit,
   raw,
+  range,
 }: SensorCardProps) {
   return (
     <Card>
@@ -30,6 +35,7 @@ export function SensorCard({
         {raw != null && (
           <p className="mt-1.5 text-xs text-muted-foreground">brut {raw}</p>
         )}
+        {range && <MetricRange evaluation={range} />}
       </CardContent>
     </Card>
   );

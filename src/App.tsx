@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import {
+  AlertTriangle,
   Bluetooth,
   BluetoothConnected,
   Droplets,
@@ -11,11 +13,17 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SensorCard } from "@/components/SensorCard";
+import { PlantSelector } from "@/components/PlantSelector";
+import { PLANTS, getPlant } from "@/data/plants";
+import { evaluatePlant, frostAdvisory } from "@/lib/plantRanges";
+import { isGrowingSeason } from "@/lib/season";
 import { useFlowerPower } from "@/hooks/useFlowerPower";
 import { isWebBluetoothAvailable } from "@/lib/flowerPower";
 
 const fmt = (n: number | null | undefined, digits = 1) =>
   n == null ? "—" : n.toFixed(digits);
+
+const PLANT_STORAGE_KEY = "fp.plant";
 
 function App() {
   const {
@@ -29,8 +37,44 @@ function App() {
     disconnect,
   } = useFlowerPower();
 
+  const [plantId, setPlantId] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(PLANT_STORAGE_KEY);
+      if (saved && PLANTS.some((p) => p.id === saved)) return saved;
+    } catch {
+      /* stockage indisponible (Safari privé, quota) : on garde le défaut */
+    }
+    return PLANTS[0].id;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PLANT_STORAGE_KEY, plantId);
+    } catch {
+      /* stockage indisponible : on ignore */
+    }
+  }, [plantId]);
+
+  // Horloge qui avance même hors connexion, pour que la lumière (modèle
+  // solaire), la saison et l'alerte gel restent à jour ; une fois connecté,
+  // `updatedAt` (rafraîchi ~3 s) prend le relais.
+  const [clock, setClock] = useState<Date>(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setClock(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   const connected = status === "connected";
   const supported = isWebBluetoothAvailable();
+
+  const plant = getPlant(plantId) ?? PLANTS[0];
+  // `updatedAt` n'est jamais remis à null après déconnexion : on ne l'utilise
+  // donc que tant qu'on est connecté, sinon l'horloge reprend la main (sans quoi
+  // le temps figerait à la dernière mesure après déconnexion).
+  const now = connected ? (updatedAt ?? clock) : clock;
+  const evals = evaluatePlant(plant, reading, now);
+  const growing = isGrowingSeason(now);
+  const frost = frostAdvisory(plant, reading?.airTemperature ?? null, now);
 
   return (
     <div className="mx-auto min-h-dvh max-w-2xl px-5 py-8">
@@ -42,6 +86,27 @@ function App() {
           Lecteur direct du capteur Parrot — sans compte ni cloud
         </p>
       </header>
+
+      <div className="my-6">
+        <PlantSelector value={plantId} onChange={setPlantId} />
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Badge variant="muted">
+            {growing ? "Saison de croissance" : "Repos hivernal"}
+          </Badge>
+          <p className="text-xs text-muted-foreground">{plant.note}</p>
+        </div>
+      </div>
+
+      {/* Région live : l'alerte gel (message de sécurité) est annoncée aux
+          lecteurs d'écran quand elle apparaît. */}
+      <div role="status" aria-live="polite">
+        {frost && (
+          <p className="mb-6 flex items-center justify-center gap-2 rounded-xl border border-warning/40 bg-warning/10 p-3 text-center text-sm text-warning">
+            <AlertTriangle className="size-4 shrink-0" aria-hidden />
+            {frost}
+          </p>
+        )}
+      </div>
 
       <div className="my-6 flex flex-wrap items-center justify-center gap-3">
         {connected ? (
@@ -90,6 +155,7 @@ function App() {
           unit="% VWC"
           value={fmt(reading?.soilMoisture)}
           raw={reading?.raw.soilMoisture}
+          range={evals.soilMoisture}
         />
         <SensorCard
           icon={Thermometer}
@@ -104,6 +170,7 @@ function App() {
           unit="°C"
           value={fmt(reading?.airTemperature)}
           raw={reading?.raw.airTemperature}
+          range={evals.airTemperature}
         />
         <SensorCard
           icon={Sun}
@@ -111,12 +178,15 @@ function App() {
           unit="mol/m²/j"
           value={fmt(reading?.sunlight, 2)}
           raw={reading?.raw.sunlight}
+          range={evals.light}
         />
         <SensorCard
           icon={FlaskConical}
-          label="Fertilité (EC)"
-          unit="brut"
-          value={reading?.soilEC != null ? String(reading.soilEC) : "—"}
+          label="Fertilité (indice)"
+          unit="/100"
+          value={fmt(evals.fertilizer.value, 0)}
+          raw={reading?.soilEC}
+          range={evals.fertilizer}
         />
         <SensorCard
           icon={Leaf}
