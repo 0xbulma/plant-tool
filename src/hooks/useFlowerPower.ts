@@ -12,8 +12,23 @@ export type ConnectionStatus = "idle" | "connecting" | "connected" | "error";
 
 const POLL_INTERVAL_MS = 3000;
 
-const toMessage = (e: unknown): string =>
-  e instanceof Error ? e.message : String(e);
+// Rend lisible n'importe quelle valeur levée. Le pont CoreBluetooth de Bluefy
+// (iOS) rejette avec un code d'erreur brut (ex. le nombre 2) plutôt qu'une
+// Error, et certaines implémentations lèvent un objet : on évite ainsi qu'un
+// simple « 2 » illisible n'atteigne l'UI.
+const toMessage = (e: unknown): string => {
+  if (e instanceof Error) return e.message || e.name || "Erreur Bluetooth inconnue.";
+  if (typeof e === "object" && e !== null) {
+    const o = e as { message?: unknown; name?: unknown; code?: unknown };
+    if (typeof o.message === "string" && o.message) return o.message;
+    if (typeof o.name === "string" && o.name) return o.name;
+    if (o.code != null) return `Erreur Bluetooth (code ${String(o.code)})`;
+  }
+  if (typeof e === "number" || (typeof e === "string" && e !== "")) {
+    return `Erreur Bluetooth (code ${String(e)})`;
+  }
+  return "Erreur Bluetooth inconnue.";
+};
 
 export function useFlowerPower() {
   const [status, setStatus] = useState<ConnectionStatus>("idle");
@@ -74,6 +89,9 @@ export function useFlowerPower() {
         timerRef.current = setTimeout(() => void tick(), POLL_INTERVAL_MS);
       } catch (e) {
         if (!mountedRef.current) return;
+        // Trace l'objet d'erreur complet (name/code) pour Safari Web Inspector ;
+        // l'UI n'en montre qu'un résumé via toMessage().
+        console.error("[FlowerPower] échec de lecture du capteur", e);
         stopPolling();
         setError(toMessage(e));
         setStatus("error");
@@ -136,6 +154,9 @@ export function useFlowerPower() {
         setStatus("idle");
         return;
       }
+      // Trace l'objet d'erreur complet (name/code) pour Safari Web Inspector ;
+      // l'UI n'en montre qu'un résumé via toMessage().
+      console.error("[FlowerPower] échec de connexion", e);
       setError(toMessage(e));
       setStatus("error");
     }
