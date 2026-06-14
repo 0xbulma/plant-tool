@@ -115,6 +115,19 @@ describe("lumière (heure / date / lieu)", () => {
     expect(light.status).not.toBe("na");
     expect(light.idealMax).toBeGreaterThan(light.idealMin);
   });
+
+  it("signale une lumière trop forte (brûlure) ou insuffisante", () => {
+    const erable = (v: number) =>
+      evaluatePlant(
+        plant("erable-japon"),
+        makeReading({ sunlight: v }),
+        SUMMER_NOON_UTC,
+      ).light;
+    const strong = erable(200); // bien au-dessus de la bande (érable = mi-ombre)
+    expect(strong.status).toBe("bad");
+    expect(strong.note).toMatch(/brûlure/i);
+    expect(erable(2).status).toBe("warn"); // lumière insuffisante pour l'instant
+  });
 });
 
 describe("fertilité (indice relatif)", () => {
@@ -142,6 +155,17 @@ describe("fertilité (indice relatif)", () => {
       .fertilizer;
     expect(f.status).toBe("ok");
     expect(f.note).toMatch(/repos/i);
+  });
+
+  it("resserre le seuil de sur-fertilisation en hiver", () => {
+    // Indice ~44 : élevé (warn) l'été, critique (bad) l'hiver pour un gourmand
+    // (critique 48 en saison, 40 en repos).
+    const summer = evaluatePlant(plant("citronnier"), makeReading({ soilEC: 780 }), JULY)
+      .fertilizer;
+    const winter = evaluatePlant(plant("citronnier"), makeReading({ soilEC: 780 }), JANUARY)
+      .fertilizer;
+    expect(summer.status).toBe("warn");
+    expect(winter.status).toBe("bad");
   });
 });
 

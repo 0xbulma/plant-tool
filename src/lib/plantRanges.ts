@@ -69,6 +69,11 @@ function seasonNote(growing: boolean, message: string): string | undefined {
   return growing ? undefined : message;
 }
 
+/** En repos hivernal, abaisse un seuil critique d'un offset (sinon inchangé). */
+function winterTighten(critical: number, growing: boolean, offset: number): number {
+  return growing ? critical : critical - offset;
+}
+
 function evaluateMoisture(plant: PlantProfile, value: number | null, now: Date): MetricEvaluation {
   const growing = isGrowingSeason(now);
   // Grand pot : séchage lent → on tolère ~3 % plus bas sur la borne basse.
@@ -76,11 +81,10 @@ function evaluateMoisture(plant: PlantProfile, value: number | null, now: Date):
   let idealMax = plant.vwc.max;
   // Seuil de SUR-ARROSAGE : atteignable sous 60 % VWC (≈ capacité au champ du
   // terreau) et resserré l'hiver. C'est le danger n°1 (pourriture racinaire).
-  let critical = plant.vwcCritical;
+  const critical = winterTighten(plant.vwcCritical, growing, WINTER_WET_TIGHTEN);
   if (!growing) {
     idealMin = Math.max(0, idealMin - WINTER_BAND_DROP);
     idealMax = Math.max(idealMin + 5, idealMax - WINTER_BAND_DROP);
-    critical -= WINTER_WET_TIGHTEN;
   }
 
   const base = { value, unit: "% VWC", axisMin: 0, axisMax: 60, idealMin, idealMax };
@@ -180,7 +184,7 @@ function evaluateFertilizer(
   const value = fertilityIndex(rawEC); // indice relatif 0–100 (~10 ≈ 1 mS/cm)
   // Sur-fertilisation = stress salin / brûlure ; danger accru l'hiver (sels
   // accumulés sans absorption) → seuil critique resserré.
-  const criticalNow = growing ? critical : critical - WINTER_FERT_TIGHTEN;
+  const criticalNow = winterTighten(critical, growing, WINTER_FERT_TIGHTEN);
   if (value >= criticalNow) {
     return { ...base, value, status: "bad", note: "Trop fertilisé — risque de brûlure" };
   }

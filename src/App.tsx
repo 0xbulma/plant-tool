@@ -68,7 +68,10 @@ function App() {
   const supported = isWebBluetoothAvailable();
 
   const plant = getPlant(plantId) ?? PLANTS[0];
-  const now = updatedAt ?? clock;
+  // `updatedAt` n'est jamais remis à null après déconnexion : on ne l'utilise
+  // donc que tant qu'on est connecté, sinon l'horloge reprend la main (sans quoi
+  // le temps figerait à la dernière mesure après déconnexion).
+  const now = connected ? (updatedAt ?? clock) : clock;
   const evals = evaluatePlant(plant, reading, now);
   const growing = isGrowingSeason(now);
   const frost = frostAdvisory(plant, reading?.airTemperature ?? null, now);
@@ -94,12 +97,16 @@ function App() {
         </div>
       </div>
 
-      {frost && (
-        <p className="mb-6 flex items-center justify-center gap-2 rounded-xl border border-warning/40 bg-warning/10 p-3 text-center text-sm text-warning">
-          <AlertTriangle className="size-4 shrink-0" aria-hidden />
-          {frost}
-        </p>
-      )}
+      {/* Région live : l'alerte gel (message de sécurité) est annoncée aux
+          lecteurs d'écran quand elle apparaît. */}
+      <div role="status" aria-live="polite">
+        {frost && (
+          <p className="mb-6 flex items-center justify-center gap-2 rounded-xl border border-warning/40 bg-warning/10 p-3 text-center text-sm text-warning">
+            <AlertTriangle className="size-4 shrink-0" aria-hidden />
+            {frost}
+          </p>
+        )}
+      </div>
 
       <div className="my-6 flex flex-wrap items-center justify-center gap-3">
         {connected ? (
