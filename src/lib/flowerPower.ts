@@ -64,6 +64,21 @@ export function convertSunlight(raw: number): number {
   return 0.0864 * (192773.17 * raw ** -1.0606619);
 }
 
+/**
+ * Indice de fertilité RELATIF (0–100) dérivé de la valeur brute d'EC.
+ *
+ * Le capteur expose une conductivité brute non calibrée et aucune conversion
+ * raw→mS/cm fiable n'est documentée publiquement (la librairie de référence
+ * `node-flower-power` utilise des tables, pas de formule). On fournit donc un
+ * INDICE RELATIF normalisé sur une pleine échelle plausible, à affiner sur
+ * matériel réel — à ne PAS interpréter comme une valeur physique en mS/cm.
+ */
+export const EC_RAW_FULL_SCALE = 2000;
+
+export function fertilityIndex(raw: number): number {
+  return clamp((raw / EC_RAW_FULL_SCALE) * 100, 0, 100);
+}
+
 export type SensorReading = {
   soilMoisture: number | null;
   soilTemperature: number | null;
